@@ -1,6 +1,7 @@
 ---
 name: jira
 description: Use when user provides a Jira ticket ID (PROJ-XXXX) and wants end-to-end implementation - fetches ticket, creates worktree, implements, pushes, creates PR, and comments on ticket
+depends-on: [using-git-worktrees, jasnah-search-memory]
 ---
 
 # Jira - End-to-End Ticket Implementation
@@ -24,11 +25,13 @@ digraph jira_flow {
     "Fetch Jira ticket" -> "Assign + In Progress";
     "Assign + In Progress" -> "Present ticket to user";
     "Present ticket to user" -> "Clarify requirements";
-    "Clarify requirements" -> "Create worktree";
+    "Clarify requirements" -> "Search prior context";
+    "Search prior context" -> "Create worktree";
     "Create worktree" -> "Implement changes";
     "Implement changes" -> "Push changes";
     "Push changes" -> "Create PR";
     "Create PR" -> "Comment on Jira ticket";
+    "Comment on Jira ticket" -> "Extract session memories";
 }
 ```
 
@@ -82,6 +85,17 @@ Review the ticket requirements for ambiguity. If any of these are true, stop and
 
 If the requirements are clear, proceed directly.
 
+### Step 1d: Search Prior Context
+
+Search Jasnah for any prior knowledge related to the ticket's domain:
+
+```bash
+JASNAH="${JASNAH_ROOT:-$HOME/.local/share/jasnah}"
+bun run "$JASNAH/scripts/search-memory.ts" "<ticket summary and key terms>"
+```
+
+Review results for relevant architecture decisions, lessons learned, or domain facts that should inform the implementation.
+
 ### Step 2: Create Worktree
 
 **REQUIRED:** Invoke the `using-git-worktrees` skill with the ticket ID (e.g., PROJ-1234). This creates an isolated branch and workspace.
@@ -111,6 +125,17 @@ bun skills/jira/jira-request.ts POST '/rest/api/2/issue/PROJ-XXXX/comment' --bod
 }'
 ```
 
+### Step 7: Extract Session Memories
+
+After the ticket is complete, extract any new knowledge gained during implementation:
+
+```bash
+JASNAH="${JASNAH_ROOT:-$HOME/.local/share/jasnah}"
+bun run "$JASNAH/scripts/extract-inline.ts" --root "$PWD" --source "jira-PROJ-XXXX"
+```
+
+This captures architecture decisions, lessons learned, and domain facts for future tickets.
+
 ## Quick Reference
 
 | Step | Tool | What Happens |
@@ -118,11 +143,13 @@ bun skills/jira/jira-request.ts POST '/rest/api/2/issue/PROJ-XXXX/comment' --bod
 | Fetch ticket | `jira-request.ts GET` | Get requirements from Jira |
 | Assign + transition | `jira-request.ts PUT/POST` | Assign to self, move to In Progress |
 | Clarify requirements | Conversation | Ask if ambiguous |
+| Search prior context | `search-memory.ts` | Find relevant prior knowledge |
 | Create worktree | `using-git-worktrees` skill | Isolated branch + workspace |
 | Implement | Write code + tests | Satisfy ticket requirements |
 | Push | git commit + push | Push branch to remote |
 | Create PR | `gh pr create` | PR targeting base branch |
 | Comment | `jira-request.ts POST` | Link PR back to ticket |
+| Extract memories | `extract-inline.ts` | Capture session knowledge |
 
 ## Common Mistakes
 

@@ -55,3 +55,11 @@ export {
   initWorkLog,
   type VaultSyncResult,
 } from "./vault-sync.js"
+
+export {
+  discoverSkills,
+  validateDependencies,
+  type SkillMetadata,
+  type SkillRegistry,
+  type SkillLoadError,
+} from "./skills.js"

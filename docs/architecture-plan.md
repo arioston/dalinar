@@ -9,7 +9,7 @@ Named after Dalinar Kholin, the Bondsmith whose Surgebinding power is Connection
 
 It is intended to be read by both humans and AI agents (Claude Code, OpenCode). Drop it into a project root or reference it from `CLAUDE.md` to give the agent full context.
 
-> **Status (March 2026):** All six implementation phases are complete. The architecture described here is fully implemented. See [protocol-reference.md](protocol-reference.md) and [pipelines-reference.md](pipelines-reference.md) for API details.
+> **Status (March 2026):** All six implementation phases are structurally complete. See [protocol-reference.md](protocol-reference.md) and [pipelines-reference.md](pipelines-reference.md) for API details. Known gaps are tracked in [Section 14.1](#141-known-gaps).
 
 ---
 
@@ -1051,6 +1051,17 @@ This project orchestrates Jasnah (memory) and Sazed (planning) for AI-augmented 
 - RPC server as unified integration point (building on Sazed's Phase 3 JSON-RPC server)
 - Extraction quality improvements (human-in-the-loop, confidence-weighted auto-commit)
 - `dalinar review-recent` command for post-hoc memory review
+
+### 14.1 Known Gaps
+
+Areas where the implementation is structurally in place but not yet fully enforced or automated:
+
+| Area | Status | Detail |
+|------|--------|--------|
+| Skill dependency enforcement | Documented + validated | `discoverSkills`/`validateDependencies` parse and check deps; no runtime enforcement blocking skill invocation |
+| Dialectic automation | Manual invocation | Pipeline exists but is not auto-triggered by commit patterns or CI |
+| Audit coverage | Core patterns | Detects decision oscillation and recurring blockers; does not yet cover knowledge staleness or cross-project duplication |
+| Memory extraction in skills | Documented in jira skill | Other skills (worktrees, dialectic) do not yet include extraction steps |
 
 ---
 
