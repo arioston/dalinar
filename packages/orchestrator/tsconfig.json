@@ -1,0 +1,21 @@
+{
+  "compilerOptions": {
+    "composite": true,
+    "declaration": true,
+    "target": "ESNext",
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "esModuleInterop": true,
+    "strict": true,
+    "skipLibCheck": true,
+    "outDir": "./dist",
+    "rootDir": "./src",
+    "paths": {
+      "@dalinar/protocol": ["../protocol/src"]
+    }
+  },
+  "references": [
+    { "path": "../protocol" }
+  ],
+  "include": ["src/**/*.ts"]
+}

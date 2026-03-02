@@ -1,0 +1,11 @@
+{
+  "name": "dalinar",
+  "private": true,
+  "version": "0.1.0",
+  "description": "The Bondsmith — unifying Jasnah (memory) and Sazed (planning) into a cohesive AI-augmented development workflow",
+  "workspaces": [
+    "packages/*",
+    "modules/jasnah",
+    "modules/sazed/packages/*"
+  ]
+}
