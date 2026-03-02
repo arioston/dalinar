@@ -23,6 +23,14 @@ Dalinar orchestrates Jasnah (memory) and Sazed (planning) for AI-augmented devel
    bun run "$JASNAH/scripts/extract-inline.ts" --root "$PWD" --source "session-description"
    ```
 
+## Orchestrator Pipelines
+
+- **analyze-with-context**: `bun run packages/orchestrator/src/analyze-with-context.ts EPIC-XXX [--force] [--notes]`
+  Searches Jasnah → runs Sazed analysis → extracts knowledge back to Jasnah
+
+- **implement-ticket**: `bun run packages/orchestrator/src/implement-ticket.ts PROJ-123 [--analyze] [--worktree]`
+  Gathers context → optional analysis → optional worktree → outputs implementation plan
+
 ## Skills Available
 
 - **jasnah-debug-trace**: Structured debugging with trace utilities (Agans' 9 Rules)
