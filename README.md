@@ -20,33 +20,45 @@ These two systems are connected through a shared protocol package and orchestrat
 dalinar/
 ├── packages/
 │   ├── protocol/        Shared contract: types, retention, secrets, frontmatter
-│   └── orchestrator/    Cross-system pipelines
+│   └── orchestrator/    Cross-system pipelines (6 pipelines)
 ├── modules/
 │   ├── jasnah/          git submodule — memory & knowledge
 │   └── sazed/           git submodule — planning & analysis
 ├── skills/
 │   ├── using-git-worktrees/   Workspace isolation
 │   ├── jira/                  Full ticket lifecycle
-│   └── dialectic/             Adversarial reasoning (planned)
+│   ├── jasnah-debug-trace/    Structured debugging (Agans' 9 Rules)
+│   ├── jasnah-query/          Database querying via psql
+│   └── dialectic/             Adversarial reasoning for decisions
 └── docs/
-    └── architecture-plan.md   Full architecture vision
+    ├── architecture-plan.md   Full architecture vision
+    ├── protocol-reference.md  Protocol package API reference
+    └── pipelines-reference.md Orchestrator pipelines guide
 ```
 
 ## Components
 
 **Jasnah** (`modules/jasnah/`) — Memory extraction and retrieval pack. Captures decisions, insights, and facts from AI coding sessions. Stores entries as markdown with YAML frontmatter and provides optional Qdrant-powered semantic search with Ebbinghaus retention scoring.
 
-**Sazed** (`modules/sazed/`) — Epic analysis and task decomposition. Analyzes Jira epics, fetches relevant memories from Jasnah, and produces structured implementation plans with context-aware task breakdowns.
+**Sazed** (`modules/sazed/`) — Epic analysis and task decomposition. Analyzes Jira epics, fetches relevant memories from Jasnah, and produces structured implementation plans with context-aware task breakdowns. Built with Effect TypeScript.
 
-**Protocol** (`packages/protocol/`) — Shared contract between Jasnah and Sazed. Defines note types, retention math (Ebbinghaus forgetting curve with type-specific half-life multipliers), secret filtering, and frontmatter schemas.
+**Protocol** (`packages/protocol/`) — Shared contract between Jasnah and Sazed. Defines the unified 5-type note taxonomy, Ebbinghaus retention math with type-specific half-life multipliers, 3-layer secret detection, and YAML frontmatter parser/serializer. See [docs/protocol-reference.md](docs/protocol-reference.md).
 
-**Orchestrator** (`packages/orchestrator/`) — Cross-system pipelines that coordinate Jasnah and Sazed. Includes `analyze-with-context` (epic analysis enriched with memory retrieval) and `implement-ticket` (full ticket workflow from fetch to PR).
+**Orchestrator** (`packages/orchestrator/`) — Six cross-system pipelines that coordinate Jasnah and Sazed. See [docs/pipelines-reference.md](docs/pipelines-reference.md).
+
+| Pipeline | Description |
+|----------|-------------|
+| `analyze-with-context` | Search Jasnah → run Sazed analysis → extract knowledge back |
+| `implement-ticket` | Full lifecycle: context → analysis → worktree → implementation plan |
+| `audit` | Cross-session pattern detection (recurring blockers, decision oscillation, knowledge gaps) |
+| `dialectic` | Adversarial reasoning — isolated opposing analyses with Hegelian synthesis |
+| `reflect` | Post-sprint retrospective capture — feeds corrections back as memories |
 
 ## Getting Started
 
 ```bash
 # 1. Clone the repository
-git clone <repo-url> dalinar
+git clone https://github.com/arioston/dalinar.git
 
 # 2. Initialize submodules (Jasnah and Sazed)
 git submodule update --init --recursive
@@ -54,3 +66,32 @@ git submodule update --init --recursive
 # 3. Install dependencies
 bun install
 ```
+
+## Quick Reference
+
+```bash
+# Analyze an epic with prior context from memory
+bun run packages/orchestrator/src/analyze-with-context.ts EPIC-123
+
+# Prepare implementation context for a ticket
+bun run packages/orchestrator/src/implement-ticket.ts PROJ-456 --analyze --worktree
+
+# Audit the memory store for patterns
+bun run packages/orchestrator/src/audit.ts
+
+# Run adversarial analysis on a decision
+bun run packages/orchestrator/src/dialectic.ts "PostgreSQL vs ClickHouse for analytics?"
+
+# Capture sprint retrospective learnings
+echo '<json>' | bun run packages/orchestrator/src/reflect.ts --sprint sprint-42
+
+# Search memories directly
+JASNAH="${JASNAH_ROOT:-$HOME/.local/share/jasnah}"
+bun run "$JASNAH/scripts/search-memory.ts" "authentication architecture"
+```
+
+## Documentation
+
+- [Architecture Plan](docs/architecture-plan.md) — Full system vision, design philosophy, and implementation plan
+- [Protocol Reference](docs/protocol-reference.md) — Types, taxonomy, retention model, secret detection, frontmatter
+- [Pipelines Reference](docs/pipelines-reference.md) — Orchestrator pipeline details and usage
