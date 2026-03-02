@@ -13,6 +13,7 @@
 
 import { searchContextForEpic, extractMemories, formatContextForPrompt, type ExtractEntry } from "./jasnah.js"
 import { analyze, type AnalyzeOptions } from "./sazed.js"
+import { syncToVault } from "./vault-sync.js"
 
 // ── CLI parsing ───────────────────────────────────────────────────
 
@@ -125,6 +126,15 @@ export async function analyzeWithContext(opts: AnalyzeOptions & { root?: string 
     }
   } else {
     console.log("[dalinar]   No new notes to extract")
+  }
+
+  // Step 4: Sync .memory/ to Obsidian vault (opt-in)
+  console.log("[dalinar] Step 4: Vault sync...")
+  const vaultResult = await syncToVault(root)
+  if (vaultResult.synced) {
+    console.log(`[dalinar]   Synced to ${vaultResult.target}`)
+  } else {
+    console.log(`[dalinar]   Skipped: ${vaultResult.reason}`)
   }
 
   // Output the analysis

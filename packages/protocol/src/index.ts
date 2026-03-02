@@ -40,3 +40,13 @@ export {
   parseFrontmatter,
   serializeFrontmatter,
 } from "./frontmatter.js";
+
+export {
+  type VaultConfig,
+  DEFAULT_VAULT_EXCLUDES,
+  resolveVaultConfig,
+  vaultProjectPath,
+  vaultTypePath,
+  vaultGlobalPath,
+  vaultGlobalDirectories,
+} from "./vault.js";

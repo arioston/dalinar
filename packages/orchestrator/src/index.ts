@@ -49,3 +49,9 @@ export {
   type WinEntry,
   type DecisionRevision,
 } from "./reflect.js"
+
+export {
+  syncToVault,
+  initWorkLog,
+  type VaultSyncResult,
+} from "./vault-sync.js"

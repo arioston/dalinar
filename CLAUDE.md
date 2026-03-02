@@ -26,7 +26,7 @@ Dalinar orchestrates Jasnah (memory) and Sazed (planning) for AI-augmented devel
 ## Orchestrator Pipelines
 
 - **analyze-with-context**: `bun run packages/orchestrator/src/analyze-with-context.ts EPIC-XXX [--force] [--notes]`
-  Searches Jasnah → runs Sazed analysis → extracts knowledge back to Jasnah
+  Searches Jasnah → runs Sazed analysis → extracts knowledge back → vault sync
 
 - **implement-ticket**: `bun run packages/orchestrator/src/implement-ticket.ts PROJ-123 [--analyze] [--worktree]`
   Gathers context → optional analysis → optional worktree → outputs implementation plan
@@ -40,6 +40,9 @@ Dalinar orchestrates Jasnah (memory) and Sazed (planning) for AI-augmented devel
 - **reflect**: `bun run packages/orchestrator/src/reflect.ts --sprint sprint-XX [--dry-run]`
   Post-sprint retrospective capture — feeds corrections back as memories
 
+- **vault-sync**: `bun run packages/orchestrator/src/vault-sync.ts [project-root]`
+  Sync .memory/ to Obsidian vault Work Log folder (opt-in via `WORK_LOG_PATH`)
+
 ## Skills Available
 
 - **jasnah-debug-trace**: Structured debugging with trace utilities (Agans' 9 Rules)
@@ -51,8 +54,8 @@ Dalinar orchestrates Jasnah (memory) and Sazed (planning) for AI-augmented devel
 
 ## Architecture
 
-- `packages/protocol/` — Shared types, retention math, secret filtering
-- `packages/orchestrator/` — Cross-system pipelines (analyze-with-context, implement-ticket)
+- `packages/protocol/` — Shared types, retention math, secret filtering, vault config
+- `packages/orchestrator/` — Cross-system pipelines (analyze-with-context, implement-ticket, vault-sync)
 - `modules/jasnah/` — Memory extraction and retrieval (git submodule)
 - `modules/sazed/` — Epic analysis and task decomposition (git submodule)
 - `skills/` — Cross-project skills (worktrees, jira, dialectic)
@@ -63,3 +66,4 @@ Dalinar orchestrates Jasnah (memory) and Sazed (planning) for AI-augmented devel
 - Package namespace: `@dalinar/*`
 - Note types: domain-fact, architecture, api-contract, glossary, lesson-learned
 - Retention: Ebbinghaus forgetting curve with type-specific half-life multipliers
+- Vault sync: opt-in via `WORK_LOG_PATH` env var (coexists with HoldGate in same vault)

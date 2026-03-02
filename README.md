@@ -42,17 +42,18 @@ dalinar/
 
 **Sazed** (`modules/sazed/`) — Epic analysis and task decomposition. Analyzes Jira epics, fetches relevant memories from Jasnah, and produces structured implementation plans with context-aware task breakdowns. Built with Effect TypeScript.
 
-**Protocol** (`packages/protocol/`) — Shared contract between Jasnah and Sazed. Defines the unified 5-type note taxonomy, Ebbinghaus retention math with type-specific half-life multipliers, 3-layer secret detection, and YAML frontmatter parser/serializer. See [docs/protocol-reference.md](docs/protocol-reference.md).
+**Protocol** (`packages/protocol/`) — Shared contract between Jasnah and Sazed. Defines the unified 5-type note taxonomy, Ebbinghaus retention math with type-specific half-life multipliers, 3-layer secret detection, YAML frontmatter parser/serializer, and vault configuration for Obsidian sync. See [docs/protocol-reference.md](docs/protocol-reference.md).
 
-**Orchestrator** (`packages/orchestrator/`) — Six cross-system pipelines that coordinate Jasnah and Sazed. See [docs/pipelines-reference.md](docs/pipelines-reference.md).
+**Orchestrator** (`packages/orchestrator/`) — Seven cross-system pipelines that coordinate Jasnah and Sazed, with optional Obsidian vault sync. See [docs/pipelines-reference.md](docs/pipelines-reference.md).
 
 | Pipeline | Description |
 |----------|-------------|
-| `analyze-with-context` | Search Jasnah → run Sazed analysis → extract knowledge back |
+| `analyze-with-context` | Search Jasnah → run Sazed analysis → extract knowledge back → vault sync |
 | `implement-ticket` | Full lifecycle: context → analysis → worktree → implementation plan |
 | `audit` | Cross-session pattern detection (recurring blockers, decision oscillation, knowledge gaps) |
 | `dialectic` | Adversarial reasoning — isolated opposing analyses with Hegelian synthesis |
 | `reflect` | Post-sprint retrospective capture — feeds corrections back as memories |
+| `vault-sync` | Sync .memory/ to Obsidian vault Work Log folder (opt-in via `WORK_LOG_PATH`) |
 
 ## Getting Started
 
@@ -84,6 +85,9 @@ bun run packages/orchestrator/src/dialectic.ts "PostgreSQL vs ClickHouse for ana
 
 # Capture sprint retrospective learnings
 echo '<json>' | bun run packages/orchestrator/src/reflect.ts --sprint sprint-42
+
+# Sync .memory/ to Obsidian vault (opt-in: requires WORK_LOG_PATH)
+bun run packages/orchestrator/src/vault-sync.ts
 
 # Search memories directly
 JASNAH="${JASNAH_ROOT:-$HOME/.local/share/jasnah}"

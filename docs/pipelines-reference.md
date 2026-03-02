@@ -1,6 +1,6 @@
 # Pipelines Reference — `@dalinar/orchestrator`
 
-The orchestrator provides six pipelines that compose Jasnah (memory) and Sazed (planning) workflows. These are the high-level operations that require both systems working together.
+The orchestrator provides seven pipelines that compose Jasnah (memory) and Sazed (planning) workflows. These are the high-level operations that require both systems working together.
 
 ## analyze-with-context
 
@@ -18,8 +18,10 @@ The core Dalinar pipeline. When Sazed analyzes an epic, it first queries Jasnah 
 │  3. Extract new domain knowledge from analysis results      │
 │     and write back to Jasnah's memory store                 │
 │                                                             │
+│  4. Sync .memory/ to Obsidian vault (if WORK_LOG_PATH set) │
+│                                                             │
 │  Result: Analysis informed by history; new knowledge        │
-│  captured for future analyses.                              │
+│  captured for future analyses and visible in Obsidian.      │
 └─────────────────────────────────────────────────────────────┘
 ```
 
@@ -288,6 +290,71 @@ const { entries, extractResult } = await runReflection(reflection, { root: proce
 
 ---
 
+## vault-sync
+
+Opt-in sync of `.memory/` to an Obsidian vault's Work Log folder. Runs automatically as part of `analyze-with-context`, or can be invoked standalone. Silently skips when `WORK_LOG_PATH` is not set.
+
+```
+┌──────────────────────────────────────────────────────────────┐
+│                       vault-sync                              │
+│                                                              │
+│  1. Check WORK_LOG_PATH (skip silently if not set)           │
+│  2. Infer project name from git repo root                    │
+│  3. rsync .memory/ → $WORK_LOG_PATH/<project>/               │
+│     (excludes: config.yaml, locks/, raw/, index.json)        │
+│  4. Obsidian Sync picks up changes automatically             │
+└──────────────────────────────────────────────────────────────┘
+```
+
+### Usage
+
+```bash
+# Sync current project
+bun run packages/orchestrator/src/vault-sync.ts
+
+# Sync a specific project root
+bun run packages/orchestrator/src/vault-sync.ts /path/to/project
+
+# Or use the shell script directly
+scripts/vault-sync.sh [project-root]
+```
+
+### Programmatic API
+
+```typescript
+import { syncToVault, initWorkLog } from "@dalinar/orchestrator"
+
+// Sync .memory/ to vault (returns immediately if WORK_LOG_PATH not set)
+const result = await syncToVault("/path/to/project")
+if (result.synced) {
+  console.log(`Synced to ${result.target}`)
+}
+
+// Initialize Work Log folder structure (creates _global/ dirs)
+await initWorkLog({ workLogPath: "/path/to/vault/60-Work-Log" })
+```
+
+### Setup
+
+1. Choose a folder in your Obsidian vault (following your numbering convention):
+   ```bash
+   export WORK_LOG_PATH="$HOME/Vault/60-Work-Log"
+   ```
+
+2. Add to your shell profile (`~/.bashrc` or `~/.zshrc`):
+   ```bash
+   echo 'export WORK_LOG_PATH="$HOME/path/to/vault/60-Work-Log"' >> ~/.bashrc
+   ```
+
+3. Initialize the folder structure:
+   ```bash
+   bun run packages/orchestrator/src/vault-sync.ts
+   ```
+
+The Work Log folder coexists with HoldGate folders (00-Inbox, 20-Areas, etc.) in the same vault.
+
+---
+
 ## Integration with Jasnah
 
 All pipelines use two Jasnah integration points:
@@ -330,3 +397,4 @@ The orchestrator inherits environment variables from both Jasnah and Sazed:
 | `JIRA_EMAIL` | Sazed analysis | Jira user email |
 | `JIRA_API_TOKEN` | Sazed analysis | Jira API token |
 | `ANTHROPIC_API_KEY` | Sazed LLM | Anthropic API key for analysis |
+| `WORK_LOG_PATH` | Vault sync | Path to Work Log folder in Obsidian vault (opt-in) |

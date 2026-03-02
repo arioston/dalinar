@@ -143,6 +143,58 @@ const markdown = serializeFrontmatter({ type: "architecture", tags: ["db"] }, "N
 // "---\ntype: architecture\ntags: [db]\n---\n\nNote content"
 ```
 
+## Vault Configuration
+
+Opt-in integration for syncing `.memory/` to an Obsidian vault's Work Log folder. Activated by setting `WORK_LOG_PATH`. Designed to coexist with HoldGate folders in the same vault.
+
+### Vault Structure
+
+```
+Your Vault/
+├── 00-Inbox/              ← HoldGate daily digest
+├── 20-Areas/              ← HoldGate concepts, patterns
+├── 40-Reference/          ← HoldGate references
+├── 70-Jornal/             ← HoldGate decision journals
+│
+└── 60-Work-Log/           ← Dalinar project knowledge
+    ├── _global/
+    │   ├── architecture/
+    │   ├── domain-facts/
+    │   ├── api-contracts/
+    │   ├── glossary/
+    │   └── lessons-learned/
+    ├── project-a/         ← mirrors project-a/.memory/
+    └── project-b/         ← mirrors project-b/.memory/
+```
+
+### API
+
+```typescript
+import { resolveVaultConfig, vaultProjectPath, vaultTypePath, vaultGlobalPath } from "@dalinar/protocol"
+
+// Returns null if WORK_LOG_PATH not set (opt-in)
+const config = resolveVaultConfig()
+if (config) {
+  vaultProjectPath(config)                    // → "/home/user/Vault/60-Work-Log/dalinar"
+  vaultTypePath(config, "architecture")       // → "/home/user/Vault/60-Work-Log/dalinar/architecture"
+  vaultGlobalPath(config, "lesson-learned")   // → "/home/user/Vault/60-Work-Log/_global/lessons-learned"
+}
+
+// Override env var with explicit values
+const custom = resolveVaultConfig({
+  workLogPath: "/custom/vault/path",
+  projectName: "my-project",
+})
+```
+
+### Environment
+
+| Variable | Description |
+|----------|-------------|
+| `WORK_LOG_PATH` | Absolute path to Work Log folder in Obsidian vault (e.g., `~/Vault/60-Work-Log`) |
+
+---
+
 ## Wiring Pattern
 
 Both Jasnah and Sazed use the same pattern to delegate to protocol:
