@@ -1,0 +1,6 @@
+[submodule "modules/jasnah"]
+	path = modules/jasnah
+	url = https://github.com/arioston/jasnah.git
+[submodule "modules/sazed"]
+	path = modules/sazed
+	url = https://github.com/arioston/sazed.git
