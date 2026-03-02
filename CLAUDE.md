@@ -31,6 +31,15 @@ Dalinar orchestrates Jasnah (memory) and Sazed (planning) for AI-augmented devel
 - **implement-ticket**: `bun run packages/orchestrator/src/implement-ticket.ts PROJ-123 [--analyze] [--worktree]`
   Gathers context → optional analysis → optional worktree → outputs implementation plan
 
+- **audit**: `bun run packages/orchestrator/src/audit.ts [--extract] [--json]`
+  Scans memory store for recurring blockers, decision oscillation, knowledge gaps
+
+- **dialectic**: `bun run packages/orchestrator/src/dialectic.ts "decision question" [--extract]`
+  Adversarial reasoning — generates isolated opposing analyses for high-stakes decisions
+
+- **reflect**: `bun run packages/orchestrator/src/reflect.ts --sprint sprint-XX [--dry-run]`
+  Post-sprint retrospective capture — feeds corrections back as memories
+
 ## Skills Available
 
 - **jasnah-debug-trace**: Structured debugging with trace utilities (Agans' 9 Rules)
@@ -38,6 +47,7 @@ Dalinar orchestrates Jasnah (memory) and Sazed (planning) for AI-augmented devel
 - **jasnah-search-memory**: Semantic memory search
 - **using-git-worktrees**: Workspace isolation for feature work
 - **jira**: Full ticket lifecycle (fetch → implement → PR → comment)
+- **dialectic**: Adversarial reasoning for architectural decisions (see skills/dialectic/)
 
 ## Architecture
 

@@ -25,3 +25,27 @@ export {
 export { analyzeWithContext } from "./analyze-with-context.js"
 
 export { implementTicket, postImplementExtract } from "./implement-ticket.js"
+
+export { runAudit, type AuditReport, type AuditFinding } from "./audit.js"
+
+export {
+  runDialectic,
+  buildPositionPrompt,
+  buildSynthesisPrompt,
+  formatDialecticResult,
+  resultToExtractEntry,
+  type DialecticInput,
+  type DialecticResult,
+  type Position,
+  type Synthesis,
+} from "./dialectic.js"
+
+export {
+  runReflection,
+  reflectionToMemories,
+  type SprintReflection,
+  type EstimateCorrection,
+  type BlockerEntry,
+  type WinEntry,
+  type DecisionRevision,
+} from "./reflect.js"
