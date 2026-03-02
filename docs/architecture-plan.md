@@ -1,11 +1,15 @@
-# Superpowers — Unified Architecture Plan
+# Dalinar — Unified Architecture Plan
 
 > *"The most important step a man can take. It's not the first one, is it? It's the next one."*
 > — Dalinar Kholin, *Oathbringer*
 
-This document captures the full architectural vision, technical decisions, and implementation plan for the Superpowers project — the parent system that unifies **Jasnah** (memory and knowledge) and **Sazed** (project management and analysis) into a cohesive AI-augmented development workflow.
+This document captures the full architectural vision, technical decisions, and implementation plan for the **Dalinar** project — the parent system that unifies **Jasnah** (memory and knowledge) and **Sazed** (project management and analysis) into a cohesive AI-augmented development workflow.
+
+Named after Dalinar Kholin, the Bondsmith whose Surgebinding power is Connection — the ability to bridge, bind, and unify.
 
 It is intended to be read by both humans and AI agents (Claude Code, OpenCode). Drop it into a project root or reference it from `CLAUDE.md` to give the agent full context.
+
+> **Status (March 2026):** All six implementation phases are complete. The architecture described here is fully implemented. See [protocol-reference.md](protocol-reference.md) and [pipelines-reference.md](pipelines-reference.md) for API details.
 
 ---
 
@@ -34,7 +38,7 @@ It is intended to be read by both humans and AI agents (Claude Code, OpenCode). 
 
 ## 1. System Overview
 
-Superpowers is a Bun monorepo that orchestrates two AI-augmented development tools:
+Dalinar is a Bun monorepo that orchestrates two AI-augmented development tools:
 
 **Jasnah** — The archivist. Extracts, stores, and retrieves persistent knowledge from coding sessions. Named after Jasnah Kholin, the scholar from Brandon Sanderson's Stormlight Archive.
 
@@ -289,12 +293,12 @@ The superproject is a coordination layer, not a replacement.
 
 ---
 
-## 5. Proposed Architecture
+## 5. Architecture
 
 ### 5.1 Directory Structure
 
 ```
-superpowers/
+dalinar/
 ├── packages/
 │   ├── protocol/              # Shared contract: types, retention, secrets, frontmatter
 │   │   ├── src/
@@ -326,11 +330,13 @@ superpowers/
 │   ├── jira/
 │   │   ├── SKILL.md
 │   │   └── jira-request.ts
-│   └── dialectic/             # NEW: adversarial reasoning for decisions
+│   └── dialectic/             # Adversarial reasoning for decisions
 │       └── SKILL.md
 │
 ├── docs/
-│   └── architecture-plan.md   # This document
+│   ├── architecture-plan.md   # This document
+│   ├── protocol-reference.md  # Protocol package API reference
+│   └── pipelines-reference.md # Orchestrator pipelines guide
 │
 ├── package.json               # Bun workspace root
 ├── tsconfig.json              # Project references across everything
@@ -343,7 +349,7 @@ superpowers/
 ```json
 // package.json
 {
-  "name": "superpowers",
+  "name": "dalinar",
   "private": true,
   "workspaces": [
     "packages/*",
@@ -353,13 +359,13 @@ superpowers/
 }
 ```
 
-Sazed is itself a monorepo with `packages/{core,adapters,cli,server}`, so the workspace declaration reaches into the submodule's internal packages. Bun resolves dependencies across the entire tree, allowing Sazed's `core` package to import from `@superpowers/protocol`.
+Sazed is itself a monorepo with `packages/{core,adapters,cli,server}`, so the workspace declaration reaches into the submodule's internal packages. Bun resolves dependencies across the entire tree, allowing Sazed's `core` package to import from `@dalinar/protocol`.
 
 ### 5.3 Submodule Setup
 
 ```bash
 # Initialize the superproject
-mkdir superpowers && cd superpowers
+mkdir dalinar && cd dalinar
 git init
 bun init
 
@@ -380,8 +386,8 @@ bun install
     "composite": true,
     "declaration": true,
     "paths": {
-      "@superpowers/protocol": ["./packages/protocol/src"],
-      "@superpowers/orchestrator": ["./packages/orchestrator/src"]
+      "@dalinar/protocol": ["./packages/protocol/src"],
+      "@dalinar/orchestrator": ["./packages/orchestrator/src"]
     }
   },
   "references": [
@@ -399,7 +405,7 @@ bun install
 
 ## 6. The Protocol Package
 
-`@superpowers/protocol` is the shared contract between Jasnah and Sazed. It owns types, retention math, secret filtering, and frontmatter handling. Neither submodule imports the other — both import from protocol.
+`@dalinar/protocol` is the shared contract between Jasnah and Sazed. It owns types, retention math, secret filtering, and frontmatter handling. Neither submodule imports the other — both import from protocol.
 
 ### 6.1 Types
 
@@ -529,7 +535,7 @@ export interface NoteFrontmatter {
 
 ## 7. The Orchestrator Package
 
-`@superpowers/orchestrator` provides pipelines that compose Jasnah and Sazed workflows. These are the high-level operations that require both systems.
+`@dalinar/orchestrator` provides six pipelines that compose Jasnah and Sazed workflows. These are the high-level operations that require both systems. See [pipelines-reference.md](pipelines-reference.md) for full API details.
 
 ### 7.1 Analyze With Context
 
@@ -620,7 +626,29 @@ Inspired by the Hegelian Dialectic Skill. For high-stakes architectural decision
 └──────────────────────────────────────────────────────────────┘
 ```
 
-Usage: `superpowers dialectic "Should we introduce event sourcing for the order service?"`
+Usage: `bun run packages/orchestrator/src/dialectic.ts "Should we introduce event sourcing for the order service?"`
+
+### 7.5 Reflect (Post-Sprint Retrospective Capture)
+
+Captures corrections and learnings after a sprint when actuals are known, feeding them back as memory entries to improve future analyses.
+
+```
+┌──────────────────────────────────────────────────────────────┐
+│                       reflect                                │
+│                                                              │
+│  Input: JSON with sprint reflection data                     │
+│                                                              │
+│  Converts to memories:                                       │
+│    estimateAccuracy → lesson-learned (estimate-drift tag)    │
+│    blockers (unanticipated) → lesson-learned (blocker tag)   │
+│    wins (replicable) → domain-fact (best-practice tag)       │
+│    revisions → architecture (decision-revision tag)          │
+│                                                              │
+│  Extracts to Jasnah with sprint source tag for dedup         │
+└──────────────────────────────────────────────────────────────┘
+```
+
+Usage: `echo '<json>' | bun run packages/orchestrator/src/reflect.ts --sprint sprint-42`
 
 ---
 
@@ -830,9 +858,9 @@ The `audit` pipeline periodically (or on-demand) scans the memory store for:
 | `jasnah-query` | `modules/jasnah/skills/` | Tightly coupled to Jasnah's psql scripts |
 | `jasnah-search-memory` | `modules/jasnah/skills/` | Operates on Jasnah's memory store |
 | `jasnah-export-memory` | `modules/jasnah/skills/` | Drives Jasnah's extraction pipeline |
-| `using-git-worktrees` | `superpowers/skills/` | General-purpose, used by multiple skills |
-| `jira` | `superpowers/skills/` | Orchestrates across worktree + implementation |
-| `dialectic` | `superpowers/skills/` (NEW) | Orchestrates isolated LLM agents for decisions |
+| `using-git-worktrees` | `dalinar/skills/` | General-purpose, used by multiple skills |
+| `jira` | `dalinar/skills/` | Orchestrates across worktree + implementation |
+| `dialectic` | `dalinar/skills/` | Orchestrates isolated LLM agents for decisions |
 
 ### 12.2 Skill Composition Protocol
 
@@ -888,7 +916,7 @@ The recommended integration pattern for the initial phase. Sazed shells out to J
 **Reading (search):**
 
 ```typescript
-import { resolveJasnahRoot } from "@superpowers/protocol";
+import { resolveJasnahRoot } from "@dalinar/protocol";
 
 const jasnah = resolveJasnahRoot(); // JASNAH_ROOT → XDG → ~/.local/share/jasnah
 const result = Bun.spawnSync(
@@ -916,8 +944,7 @@ When both are in the superproject workspace, direct imports become possible:
 
 ```typescript
 // Inside Sazed's refineEpic workflow
-import { searchMemory } from "@superpowers/jasnah/search";
-import { extractInline } from "@superpowers/jasnah/extract";
+import { searchMemories, extractMemories } from "@dalinar/orchestrator";
 
 const priorDecisions = await searchMemory({
   query: "payments service architecture",
@@ -934,7 +961,7 @@ This requires Jasnah to expose a programmatic API (not just CLI scripts). The cu
 
 Jasnah MUST continue working without the superproject. The protocol package provides types and utilities that Jasnah can optionally depend on:
 
-- **When running inside superproject workspace:** Imports live from `@superpowers/protocol`
+- **When running inside superproject workspace:** Imports live from `@dalinar/protocol`
 - **When running standalone (globally installed):** Uses bundled copies of the types and functions
 
 This is conceptually similar to how Sazed's Effect adapters work: the core defines interfaces, adapters provide implementations, and what's available depends on the runtime context.
@@ -972,79 +999,66 @@ This project orchestrates Jasnah (memory) and Sazed (planning) for AI-augmented 
 
 ---
 
-## 14. Migration Plan
+## 14. Implementation History
 
-### Phase 1: Scaffold (no code changes to submodules)
+> **All six phases completed March 2026.**
 
-- Create the superpowers repo
-- Add Jasnah and Sazed as git submodules
-- Set up Bun workspace with correct `workspaces` config
-- Verify `bun install` resolves across the entire tree
-- Move `using-git-worktrees` and `jira` skills to `superpowers/skills/`
-- Create initial `CLAUDE.md` with unified instructions
-- Create `docs/architecture-plan.md` (this document)
+### Phase 1: Scaffold — COMPLETED
 
-Deliverable: A working workspace where you can `cd modules/jasnah && bun test` and `cd modules/sazed && bun test` without issues.
+- Created the Dalinar repo with orphan branch for clean history
+- Added Jasnah and Sazed as git submodules under `modules/`
+- Set up Bun workspace with `workspaces: ["packages/*", "modules/jasnah", "modules/sazed/packages/*"]`
+- Moved `using-git-worktrees` and `jira` skills to `skills/`
+- Created `CLAUDE.md`, `README.md`, and `docs/architecture-plan.md`
 
-### Phase 2: Extract Protocol Package
+### Phase 2: Extract Protocol Package — COMPLETED
 
-- Create `packages/protocol/` with types, taxonomy, retention, secrets, frontmatter
-- Write tests for all protocol functions
-- Verify retention math matches both Jasnah and Sazed implementations
-- Add type-specific half-life multipliers
-- Add legacy alias support (`decision` → `architecture`, etc.)
+- Created `packages/protocol/` with types, taxonomy, retention, secrets, frontmatter
+- 61 tests covering all protocol functions
+- Retention math validated against architecture plan table values
+- Type-specific half-life multipliers and legacy alias support (`decision` → `architecture`, etc.)
 
-Deliverable: `@superpowers/protocol` passes all tests and both submodules' existing tests still pass.
+### Phase 3: Wire Jasnah to Protocol — COMPLETED
 
-### Phase 3: Wire Jasnah to Protocol
+- Jasnah imports from `@dalinar/protocol` via optional dependency + top-level await dynamic import fallback
+- Search recognizes both old (3-type) and new (5-type) directory structures (8 dirs total with dedup)
+- Extraction supports all 8 note types with correct directory mapping
+- All Jasnah tests pass in both standalone and workspace modes
 
-- Update Jasnah to import types from `@superpowers/protocol` when available
-- Implement fallback: when running standalone, use bundled types
-- Update search to recognize both old (3-type) and new (5-type) directory structures
-- Update extraction to write new entries using the 5-type system
-- Keep legacy directories as symlinks or aliases for backward compat
+### Phase 4: Wire Sazed to Protocol — COMPLETED
 
-Deliverable: Jasnah works identically in both standalone and workspace modes. Old memories are still findable.
+- Sazed core and adapters packages wired to `@dalinar/protocol` as optional dependencies
+- `Retention.ts`, `SecretFilter.ts`, and `frontmatter.ts` delegate to protocol when available, fall back to local copies when standalone
+- All 169 Sazed tests pass
 
-### Phase 4: Wire Sazed to Protocol
+### Phase 5: Build Orchestrator — COMPLETED
 
-- Update Sazed's `core` package to import types from `@superpowers/protocol`
-- Update note extraction to use the shared frontmatter format
-- Add CLI option for Sazed to write notes into Jasnah's `.memory/` (via `extract-inline.ts` or direct file write)
+- `analyze-with-context`: search Jasnah → Sazed analysis → extract knowledge back
+- `implement-ticket`: full lifecycle pipeline (context → analysis → worktree → implementation plan)
+- Jasnah integration module (search, extract, format context for prompts)
+- Sazed integration module (subprocess wrapper around CLI)
 
-Deliverable: `sazed analyze EPIC-123 --notes` writes to `.memory/` in the protocol format.
+### Phase 6: Advanced Features — COMPLETED
 
-### Phase 5: Build Orchestrator
+- `audit`: cross-session pattern detection (recurring blockers, decision oscillation, knowledge gaps, tag clusters)
+- `dialectic`: adversarial reasoning for decisions (Hegelian synthesis with isolated agent prompts)
+- `reflect`: post-sprint retrospective capture (estimate drift, blockers, wins, decision revisions → memories)
+- Dialectic skill definition at `skills/dialectic/SKILL.md`
 
-- Implement `analyze-with-context`: search Jasnah → analyze with Sazed → extract back
-- Implement `implement-ticket`: full lifecycle pipeline
-- Wire up the orchestrator as CLI commands or as skill instructions
+### Future Work
 
-Deliverable: `superpowers analyze EPIC-123` runs the full feedback loop.
-
-### Phase 6: Advanced Features
-
-- Implement `audit` (cross-session pattern detection)
-- Implement `dialectic` (adversarial reasoning for decisions)
-- Build the reflection/correction capture mechanism for post-sprint retrospectives
-- Explore cross-project knowledge sharing (global insights tier)
-
-Deliverable: Full feature set as described in this document.
+- Cross-project knowledge sharing (global insights tier with separate Qdrant collection)
+- RPC server as unified integration point (building on Sazed's Phase 3 JSON-RPC server)
+- Extraction quality improvements (human-in-the-loop, confidence-weighted auto-commit)
+- `dalinar review-recent` command for post-hoc memory review
 
 ---
 
 ## 15. Open Questions
 
-### 15.1 Parent Project Name
+### 15.1 Parent Project Name — RESOLVED
 
-Cosmere naming convention. Candidates:
-
-| Name | Character | Thematic Fit |
-|---|---|---|
-| **Dalinar** | The Bondsmith (Stormlight Archive) | Unifier — his power is literally Connection, binding separate things together |
-| **Navani** | Engineer/scholar, Jasnah's mother (Stormlight Archive) | Builder of connective infrastructure. Also literally the parent of Jasnah. |
-| **Harmony** | Sazed's ascended form (Mistborn) | Two forces (Ruin + Preservation) unified. But common word, namespace collision risk. |
-| **Hoid** | The Cosmere's persistent character | Moves between worlds carrying knowledge. Short, memorable. But trickster connotation. |
+**Chosen: Dalinar** — The Bondsmith from the Stormlight Archive. His Surgebinding power is literally Connection — the ability to bridge, bind, and unify separate things. Package namespace: `@dalinar/*`. Repository: `github.com/arioston/dalinar`.
 
 ### 15.2 RPC Server as Integration Point
 
@@ -1065,7 +1079,7 @@ Currently, agents self-assess what's worth extracting. This is efficient (no ext
 - Human-in-the-loop confirmation before committing memories
 - Second-pass validation by a different LLM call
 - Confidence-weighted extraction (only auto-commit "high" confidence, prompt for "medium")
-- Post-hoc review command: `superpowers review-recent` shows last N extractions for approval
+- Post-hoc review command: `dalinar review-recent` shows last N extractions for approval
 
 ### 15.5 Repo-Map Freshness
 
@@ -1132,11 +1146,11 @@ All projects in this ecosystem use names from Brandon Sanderson's Cosmere univer
 
 | Project | Character | Source | Role |
 |---|---|---|---|
-| Jasnah | Jasnah Kholin | Stormlight Archive | The scholar who accumulates knowledge |
-| Sazed | Sazed of Terris | Mistborn | The Keeper who stores and retrieves coppermind memories |
-| (Parent) | TBD | Cosmere | The binding force that unifies |
+| **Dalinar** | Dalinar Kholin, the Bondsmith | Stormlight Archive | The unifier — Connection binds separate systems together |
+| **Jasnah** | Jasnah Kholin, the scholar | Stormlight Archive | The archivist who accumulates knowledge |
+| **Sazed** | Sazed of Terris, the Keeper | Mistborn | The planner who stores and retrieves coppermind memories |
 
-The `superpowers` namespace is used for paths (e.g., `~/.config/superpowers/worktrees/`) but the git repo and package names should use the chosen Cosmere character name.
+Package namespace: `@dalinar/*`. Repository: `github.com/arioston/dalinar`.
 
 Skill names follow the convention `^[a-z0-9]+(-[a-z0-9]+)*$` (lowercase with hyphens).
 
@@ -1144,7 +1158,7 @@ Skill names follow the convention `^[a-z0-9]+(-[a-z0-9]+)*$` (lowercase with hyp
 
 ## 18. Reference: Agans' 9 Rules Mapping
 
-How each of Agans' 9 Indispensable Rules maps to the Superpowers ecosystem:
+How each of Agans' 9 Indispensable Rules maps to the Dalinar ecosystem:
 
 | Rule | Application |
 |---|---|
@@ -1161,4 +1175,5 @@ How each of Agans' 9 Indispensable Rules maps to the Superpowers ecosystem:
 ---
 
 *Document generated from architecture review session, March 2, 2026.*
+*All six phases implemented March 2, 2026.*
 *Source conversations: debugging skill brainstorm, brainmaxxing review, context engineering review, hegelian dialectic review, Jasnah project knowledge, Sazed README.*
