@@ -71,7 +71,93 @@ git submodule update --init --recursive
 bun install
 ```
 
-## Quick Reference
+## Sazed CLI (Direct Usage)
+
+All Sazed commands run from `modules/sazed/`. The `source` argument accepts either a Jira key or a path to a document file.
+
+### Repo Map
+
+Generate a pre-analysis repo map that gives the LLM agent a head start during exploration (skips structure discovery, saves tool call budget):
+
+```bash
+cd modules/sazed
+
+# Generate or update the repo map
+bun run packages/cli/src/main.ts map
+
+# Force full regeneration (ignores cache)
+bun run packages/cli/src/main.ts map --force
+
+# Output map to stdout (for inspection)
+bun run packages/cli/src/main.ts map --stdout
+```
+
+### Analyze an Epic
+
+Run the full analysis pipeline (explore → plan → refine → validate → reconcile):
+
+```bash
+# From a Jira epic
+bun run packages/cli/src/main.ts analyze EPIC-123
+
+# From a local document (PDF, Word, Markdown, etc.)
+bun run packages/cli/src/main.ts analyze ./specs/feature-design.pdf
+
+# Common flags
+bun run packages/cli/src/main.ts analyze EPIC-123 --stdout       # Output to stdout instead of file
+bun run packages/cli/src/main.ts analyze EPIC-123 --force        # Re-analyze even if nothing changed
+bun run packages/cli/src/main.ts analyze EPIC-123 --review       # Pause after exploration for human review
+bun run packages/cli/src/main.ts analyze EPIC-123 --notes        # Extract domain notes after planning
+bun run packages/cli/src/main.ts analyze EPIC-123 --no-map       # Skip repo map (for A/B testing)
+bun run packages/cli/src/main.ts analyze EPIC-123 --no-cache     # Skip exploration cache
+bun run packages/cli/src/main.ts analyze EPIC-123 --forensics    # Auto-generate git forensics report
+```
+
+### Git Forensics
+
+Analyze git history for hotspots, temporal coupling, and ownership patterns:
+
+```bash
+bun run packages/cli/src/main.ts forensics           # Generate forensics report
+bun run packages/cli/src/main.ts forensics --stdout   # Output to stdout
+```
+
+### Task Management
+
+```bash
+bun run packages/cli/src/main.ts status EPIC-123      # Check staleness of refined tasks
+bun run packages/cli/src/main.ts diff EPIC-123         # Diff last two refinement snapshots
+bun run packages/cli/src/main.ts sync EPIC-123 --dry-run  # Preview Jira sync
+bun run packages/cli/src/main.ts sync EPIC-123         # Sync tasks to Jira as subtasks
+```
+
+### Domain Notes
+
+```bash
+bun run packages/cli/src/main.ts notes list            # List notes with retention scores
+bun run packages/cli/src/main.ts notes search "auth"   # Search notes
+bun run packages/cli/src/main.ts notes show SLUG       # Show full note content
+bun run packages/cli/src/main.ts notes gc              # Tombstone decayed notes (retention < 1%)
+```
+
+### Environment Variables
+
+| Variable | Required | Description |
+|----------|----------|-------------|
+| `ANTHROPIC_API_KEY` | Yes | Claude API key for LLM analysis |
+| `JIRA_BASE_URL` | For Jira | Jira instance URL |
+| `JIRA_EMAIL` | For Jira | Jira account email |
+| `JIRA_API_TOKEN` | For Jira | Jira API token |
+| `JIRA_PROJECT_KEY` | For sync | Project key for creating subtasks |
+| `GIT_ROOT` | No | Override git root detection |
+| `OUTPUT_DIR` | No | Where to write analysis output |
+| `LLM_MODEL` | No | Override LLM model |
+| `TOOL_CALL_BUDGET` | No | Exploration tool call limit (default: 25) |
+| `REFINEMENT_CONCURRENCY` | No | Parallel task refinement (default: 3) |
+
+## Orchestrator Pipelines (Cross-System)
+
+These pipelines coordinate Sazed with Jasnah memory. Run from the dalinar root:
 
 ```bash
 # Analyze an epic with prior context from memory
