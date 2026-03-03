@@ -40,7 +40,10 @@ dalinar/
 
 **Jasnah** (`modules/jasnah/`) — Memory extraction and retrieval pack. Captures decisions, insights, and facts from AI coding sessions. Stores entries as markdown with YAML frontmatter and provides optional Qdrant-powered semantic search with Ebbinghaus retention scoring.
 
-**Sazed** (`modules/sazed/`) — Epic analysis and task decomposition. Analyzes Jira epics, fetches relevant memories from Jasnah, and produces structured implementation plans with context-aware task breakdowns. Built with Effect TypeScript. Includes a `DocumentParserService` that lets the LLM exploration agent read non-code files (PDF, Word, Excel, PowerPoint, images) committed to repos, and supports downloading and parsing Jira epic attachments.
+**Sazed** (`modules/sazed/`) — Epic analysis and task decomposition. Analyzes Jira epics or local documents, fetches relevant memories from Jasnah, and produces structured implementation plans with context-aware task breakdowns. Built with Effect TypeScript. Key capabilities:
+- **Flexible epic sources** — accepts Jira keys (`EPIC-123`) or document files (`.md`, `.txt`, `.pdf`, `.docx`, `.pptx`, `.xlsx`) as input via `EpicResolverService`
+- **Document parsing** — `DocumentParserService` lets the LLM exploration agent read non-code files (PDF, Word, Excel, PowerPoint, images) committed to repos
+- **Jira attachments** — downloads and parses Jira epic attachments so the LLM has full context from specs and design docs
 
 **Protocol** (`packages/protocol/`) — Shared contract between Jasnah and Sazed. Defines the unified 5-type note taxonomy, Ebbinghaus retention math with type-specific half-life multipliers, 3-layer secret detection, YAML frontmatter parser/serializer, and vault configuration for Obsidian sync. See [docs/protocol-reference.md](docs/protocol-reference.md).
 
