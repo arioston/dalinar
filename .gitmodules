@@ -4,3 +4,6 @@
 [submodule "modules/sazed"]
 	path = modules/sazed
 	url = https://github.com/arioston/sazed.git
+[submodule "modules/hoid"]
+	path = modules/hoid
+	url = https://github.com/arioston/hoid.git

@@ -9,7 +9,8 @@
     "@dalinar/protocol": "workspace:*"
   },
   "optionalDependencies": {
-    "jasnah": "workspace:*"
+    "jasnah": "workspace:*",
+    "hoid": "workspace:*"
   },
   "devDependencies": {
     "@types/bun": "latest"

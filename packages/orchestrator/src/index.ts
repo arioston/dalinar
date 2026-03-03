@@ -63,3 +63,16 @@ export {
   type SkillRegistry,
   type SkillLoadError,
 } from "./skills.js"
+
+export {
+  listEvents as hoidListEvents,
+  freeSlots as hoidFreeSlots,
+  createEvent as hoidCreateEvent,
+  moveEvent as hoidMoveEvent,
+  conflicts as hoidConflicts,
+  type CalendarListOptions,
+  type FreeSlotsOptions,
+  type CreateEventOptions,
+  type MoveEventOptions,
+  type ConflictsOptions,
+} from "./hoid.js"

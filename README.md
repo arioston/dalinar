@@ -12,7 +12,7 @@ Dalinar is the parent project — a Bun monorepo that unifies two sibling system
 - **Jasnah** (the archivist) — memory extraction and retrieval: captures decisions, insights, and facts from AI coding sessions and makes them searchable across projects.
 - **Sazed** (the planner) — epic analysis and task decomposition: breaks down tickets into actionable steps with full project context.
 
-These two systems are connected through a shared protocol package and orchestration pipelines. Named after Dalinar Kholin, the Bondsmith whose Surgebinding power is Connection — the ability to bridge, bind, and unify.
+These systems are connected through a shared protocol package and orchestration pipelines. Named after Dalinar Kholin, the Bondsmith whose Surgebinding power is Connection — the ability to bridge, bind, and unify.
 
 ## Project Structure
 
@@ -20,13 +20,15 @@ These two systems are connected through a shared protocol package and orchestrat
 dalinar/
 ├── packages/
 │   ├── protocol/        Shared contract: types, retention, secrets, frontmatter
-│   └── orchestrator/    Cross-system pipelines (6 pipelines)
+│   └── orchestrator/    Cross-system pipelines (7 pipelines)
 ├── modules/
 │   ├── jasnah/          git submodule — memory & knowledge
-│   └── sazed/           git submodule — planning & analysis
+│   ├── sazed/           git submodule — planning & analysis
+│   └── hoid/            git submodule — unified calendar (Google + Microsoft)
 ├── skills/
 │   ├── using-git-worktrees/   Workspace isolation
 │   ├── jira/                  Full ticket lifecycle
+│   ├── calendar/              Unified calendar operations
 │   ├── jasnah-debug-trace/    Structured debugging (Agans' 9 Rules)
 │   ├── jasnah-query/          Database querying via psql
 │   └── dialectic/             Adversarial reasoning for decisions
@@ -45,9 +47,11 @@ dalinar/
 - **Document parsing** — `DocumentParserService` lets the LLM exploration agent read non-code files (PDF, Word, Excel, PowerPoint, images) committed to repos
 - **Jira attachments** — downloads and parses Jira epic attachments so the LLM has full context from specs and design docs
 
+**Hoid** (`modules/hoid/`) — Unified calendar interface across Google Calendar and Microsoft Graph, supporting multiple accounts per provider. Lists events, finds free slots, creates and moves events, and detects scheduling conflicts. Uses raw `fetch()` for API calls, Zod schemas for all types, and sweep-line algorithms for merge/availability operations. See [modules/hoid/README.md](modules/hoid/README.md).
+
 **Protocol** (`packages/protocol/`) — Shared contract between Jasnah and Sazed. Defines the unified 5-type note taxonomy, Ebbinghaus retention math with type-specific half-life multipliers, 3-layer secret detection, YAML frontmatter parser/serializer, and vault configuration for Obsidian sync. See [docs/protocol-reference.md](docs/protocol-reference.md).
 
-**Orchestrator** (`packages/orchestrator/`) — Seven cross-system pipelines that coordinate Jasnah and Sazed, with optional Obsidian vault sync. See [docs/pipelines-reference.md](docs/pipelines-reference.md).
+**Orchestrator** (`packages/orchestrator/`) — Cross-system pipelines that coordinate Jasnah, Sazed, and Hoid, with optional Obsidian vault sync. See [docs/pipelines-reference.md](docs/pipelines-reference.md).
 
 | Pipeline | Description |
 |----------|-------------|
@@ -64,7 +68,7 @@ dalinar/
 # 1. Clone the repository
 git clone https://github.com/arioston/dalinar.git
 
-# 2. Initialize submodules (Jasnah and Sazed)
+# 2. Initialize submodules (Jasnah, Sazed, Hoid)
 git submodule update --init --recursive
 
 # 3. Install dependencies
@@ -155,9 +159,47 @@ bun run packages/cli/src/main.ts notes gc              # Tombstone decayed notes
 | `TOOL_CALL_BUDGET` | No | Exploration tool call limit (default: 25) |
 | `REFINEMENT_CONCURRENCY` | No | Parallel task refinement (default: 3) |
 
+## Hoid CLI (Calendar)
+
+Calendar commands run from `modules/hoid/`.
+
+```bash
+cd modules/hoid
+
+# Add a new account (interactive — prompts for provider, credentials)
+bun run packages/cli/src/calendar-auth.ts --add
+
+# Login (starts OAuth flow, opens browser)
+bun run packages/cli/src/calendar-auth.ts --account work-google
+
+# Check auth status
+bun run packages/cli/src/calendar-auth.ts --status
+
+# List events (next 7 days, all accounts)
+bun run packages/cli/src/calendar-list.ts --days 7 --json
+
+# Find free slots (30+ min, within working hours)
+bun run packages/cli/src/calendar-free-slots.ts --days 5 --min-duration 30 --working-hours 9-17 --json
+
+# Create an event
+bun run packages/cli/src/calendar-create.ts \
+  --title "Team Standup" --start "2024-03-15T09:00:00" --end "2024-03-15T09:30:00" \
+  --account work-google --json
+
+# Move an event (same or cross-account)
+bun run packages/cli/src/calendar-move.ts \
+  --event-id EVENT_ID --source work-google \
+  --new-start "2024-03-15T10:00:00" --new-end "2024-03-15T10:30:00"
+
+# Detect scheduling conflicts
+bun run packages/cli/src/calendar-conflicts.ts --days 7 --json
+```
+
+See [modules/hoid/README.md](modules/hoid/README.md) and [modules/hoid/packages/calendar/README.md](modules/hoid/packages/calendar/README.md) for full flag reference.
+
 ## Orchestrator Pipelines (Cross-System)
 
-These pipelines coordinate Sazed with Jasnah memory. Run from the dalinar root:
+These pipelines coordinate Sazed with Jasnah memory and Hoid calendar. Run from the dalinar root:
 
 ```bash
 # Analyze an epic with prior context from memory
