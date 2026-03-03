@@ -5,3 +5,7 @@ bun.lock
 .memory/
 .opencode/
 .claude/
+.refinement
+.specs
+.env
+auth.json
