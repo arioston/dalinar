@@ -30,21 +30,30 @@ The dialectic pipeline uses **isolated adversarial reasoning** (inspired by Hege
 
 The key insight: **isolation produces structurally decorrelated reasoning**, not just different conclusions from shared premises.
 
+## Setup
+
+Resolve the Dalinar project root:
+
+```bash
+DALINAR_ROOT="$(git rev-parse --path-format=absolute --git-common-dir 2>/dev/null | sed 's|/\.git$||')"
+[ -z "$DALINAR_ROOT" ] && DALINAR_ROOT="$(git rev-parse --show-toplevel)"
+```
+
 ## Usage
 
 ### Generate prompts for agent execution:
 ```bash
-bun run packages/orchestrator/src/dialectic.ts "Should we introduce event sourcing for the order service?"
+bun run "$DALINAR_ROOT/packages/orchestrator/src/dialectic.ts" "Should we introduce event sourcing for the order service?"
 ```
 
 ### With auto-detected constraints (X vs Y format):
 ```bash
-bun run packages/orchestrator/src/dialectic.ts "PostgreSQL vs ClickHouse for analytics"
+bun run "$DALINAR_ROOT/packages/orchestrator/src/dialectic.ts" "PostgreSQL vs ClickHouse for analytics"
 ```
 
 ### Save result as architecture note:
 ```bash
-bun run packages/orchestrator/src/dialectic.ts "Migrate to new DB?" --extract
+bun run "$DALINAR_ROOT/packages/orchestrator/src/dialectic.ts" "Migrate to new DB?" --extract
 ```
 
 ## Agent Workflow

@@ -16,6 +16,18 @@ Orchestrates the full lifecycle of implementing a Jira ticket: fetch requirement
 
 **Ticket ID** (required): Jira ticket in PROJ-XXXX format (e.g. MYAPP-1234). Extract from user message.
 
+## Setup
+
+Before running any commands, resolve the Dalinar project root (needed because this skill may run from a worktree or different cwd):
+
+```bash
+DALINAR_ROOT="$(git rev-parse --path-format=absolute --git-common-dir 2>/dev/null | sed 's|/\.git$||')"
+# Fallback: if not in a worktree, use toplevel
+[ -z "$DALINAR_ROOT" ] && DALINAR_ROOT="$(git rev-parse --show-toplevel)"
+```
+
+All `jira-request.ts` commands below use `$DALINAR_ROOT` to resolve the script path.
+
 ## Workflow
 
 ```dot
@@ -38,7 +50,7 @@ digraph jira_flow {
 ### Step 1: Fetch Jira Ticket
 
 ```bash
-bun skills/jira/jira-request.ts GET '/rest/api/2/issue/PROJ-XXXX'
+bun "$DALINAR_ROOT/skills/jira/jira-request.ts" GET '/rest/api/2/issue/PROJ-XXXX'
 ```
 
 Extract and present to user:
@@ -53,13 +65,13 @@ Extract and present to user:
 **Assign to current user:**
 
 ```bash
-bun skills/jira/jira-request.ts GET '/rest/api/2/myself'
+bun "$DALINAR_ROOT/skills/jira/jira-request.ts" GET '/rest/api/2/myself'
 ```
 
 Use the `accountId` from the response:
 
 ```bash
-bun skills/jira/jira-request.ts PUT '/rest/api/2/issue/PROJ-XXXX' --body '{"fields":{"assignee":{"accountId":"ACCOUNT_ID"}}}'
+bun "$DALINAR_ROOT/skills/jira/jira-request.ts" PUT '/rest/api/2/issue/PROJ-XXXX' --body '{"fields":{"assignee":{"accountId":"ACCOUNT_ID"}}}'
 ```
 
 **Move to In Progress** (skip if already In Progress):
@@ -67,13 +79,13 @@ bun skills/jira/jira-request.ts PUT '/rest/api/2/issue/PROJ-XXXX' --body '{"fiel
 First get available transitions:
 
 ```bash
-bun skills/jira/jira-request.ts GET '/rest/api/2/issue/PROJ-XXXX/transitions'
+bun "$DALINAR_ROOT/skills/jira/jira-request.ts" GET '/rest/api/2/issue/PROJ-XXXX/transitions'
 ```
 
 Find the transition whose `to.name` is "In Progress", then:
 
 ```bash
-bun skills/jira/jira-request.ts POST '/rest/api/2/issue/PROJ-XXXX/transitions' --body '{"transition":{"id":"TRANSITION_ID"}}'
+bun "$DALINAR_ROOT/skills/jira/jira-request.ts" POST '/rest/api/2/issue/PROJ-XXXX/transitions' --body '{"transition":{"id":"TRANSITION_ID"}}'
 ```
 
 ### Step 1c: Clarify Requirements (if needed)
@@ -120,7 +132,7 @@ Create a PR targeting the appropriate base branch. Capture the PR URL.
 Post a comment summarizing what was implemented and linking the PR:
 
 ```bash
-bun skills/jira/jira-request.ts POST '/rest/api/2/issue/PROJ-XXXX/comment' --body '{
+bun "$DALINAR_ROOT/skills/jira/jira-request.ts" POST '/rest/api/2/issue/PROJ-XXXX/comment' --body '{
   "body": "Implementation complete.\n\n*Changes:*\n- Summary of what was done\n\n*Pull Request:*\nPR_URL_HERE"
 }'
 ```

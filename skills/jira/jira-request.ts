@@ -4,21 +4,21 @@ import { parseArgs } from "util";
 /**
  * Jira API Request Utility (Bun)
  *
- * Usage: bun skills/jira/jira-request.ts <method> <path> [--body <json>]
+ * Usage: bun "$DALINAR_ROOT/skills/jira/jira-request.ts" <method> <path> [--body <json>]
  *
  * Examples:
  *
  *   # Get current user
- *   bun skills/jira/jira-request.ts GET '/rest/api/2/myself'
+ *   bun "$DALINAR_ROOT/skills/jira/jira-request.ts" GET '/rest/api/2/myself'
  *
  *   # Get a specific issue
- *   bun skills/jira/jira-request.ts GET '/rest/api/2/issue/PROJ-123'
+ *   bun "$DALINAR_ROOT/skills/jira/jira-request.ts" GET '/rest/api/2/issue/PROJ-123'
  *
  *   # Search issues
- *   bun skills/jira/jira-request.ts GET '/rest/api/2/search?jql=project=PROJ'
+ *   bun "$DALINAR_ROOT/skills/jira/jira-request.ts" GET '/rest/api/2/search?jql=project=PROJ'
  *
  *   # Create a Task
- *   bun skills/jira/jira-request.ts POST '/rest/api/2/issue' --body '{
+ *   bun "$DALINAR_ROOT/skills/jira/jira-request.ts" POST '/rest/api/2/issue' --body '{
  *     "fields": {
  *       "project": {"key": "PROJ"},
  *       "summary": "Ticket title",
@@ -28,12 +28,12 @@ import { parseArgs } from "util";
  *   }'
  *
  *   # Update an issue
- *   bun skills/jira/jira-request.ts PUT '/rest/api/2/issue/PROJ-123' --body '{
+ *   bun "$DALINAR_ROOT/skills/jira/jira-request.ts" PUT '/rest/api/2/issue/PROJ-123' --body '{
  *     "fields": {"summary": "Updated title"}
  *   }'
  *
  *   # Add a comment
- *   bun skills/jira/jira-request.ts POST '/rest/api/2/issue/PROJ-123/comment' --body '{
+ *   bun "$DALINAR_ROOT/skills/jira/jira-request.ts" POST '/rest/api/2/issue/PROJ-123/comment' --body '{
  *     "body": "Comment text"
  *   }'
  *
@@ -44,7 +44,7 @@ const VALID_METHODS = ["GET", "POST", "PUT", "DELETE"] as const;
 type Method = (typeof VALID_METHODS)[number];
 
 function usage(): never {
-  console.error("Usage: bun skills/jira/jira-request.ts <GET|POST|PUT|DELETE> <path> [--body <json>]");
+  console.error("Usage: bun jira-request.ts <GET|POST|PUT|DELETE> <path> [--body <json>]");
   process.exit(1);
 }
 

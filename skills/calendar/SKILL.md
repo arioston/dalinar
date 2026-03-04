@@ -11,54 +11,65 @@ Provides calendar operations via the Hoid module — unified interface across Go
 
 ## Setup
 
+### Resolve project root
+
+Before running any commands, resolve the Dalinar project root:
+
+```bash
+DALINAR_ROOT="$(git rev-parse --path-format=absolute --git-common-dir 2>/dev/null | sed 's|/\.git$||')"
+[ -z "$DALINAR_ROOT" ] && DALINAR_ROOT="$(git rev-parse --show-toplevel)"
+```
+
+All commands below use `$DALINAR_ROOT` to resolve script paths.
+
 ### Quick start (recommended — uses gcloud ADC)
 
 1. Run the install script (installs gcloud if needed, runs Google login):
    ```bash
-   ./modules/hoid/install.sh
+   "$DALINAR_ROOT/modules/hoid/install.sh"
    ```
 
 2. Add the account to hoid (choose "adc" auth method):
    ```bash
-   bun run modules/hoid/packages/cli/src/calendar-auth.ts --add
+   bun run "$DALINAR_ROOT/modules/hoid/packages/cli/src/calendar-auth.ts" --add
    ```
 
 3. For additional Google accounts:
    ```bash
    gcloud auth application-default login --scopes=https://www.googleapis.com/auth/calendar.readonly,https://www.googleapis.com/auth/calendar.events
-   bun run modules/hoid/packages/cli/src/calendar-auth.ts --add
+   bun run "$DALINAR_ROOT/modules/hoid/packages/cli/src/calendar-auth.ts" --add
    ```
 
 ### Alternative auth methods
 
 For OAuth (client ID + secret) or service account setups:
 ```bash
-bun run modules/hoid/packages/cli/src/calendar-auth.ts --add
+bun run "$DALINAR_ROOT/modules/hoid/packages/cli/src/calendar-auth.ts" --add
 # Choose "oauth" or "service_account" when prompted
 ```
 
 ### Check status
 
 ```bash
-bun run modules/hoid/packages/cli/src/calendar-auth.ts --status
+bun run "$DALINAR_ROOT/modules/hoid/packages/cli/src/calendar-auth.ts" --status
 ```
 
 ## Operations
 
 ### List Events
 ```bash
-bun run modules/hoid/packages/cli/src/calendar-list.ts --days 7 --json
-bun run modules/hoid/packages/cli/src/calendar-list.ts --from 2024-01-01 --to 2024-01-07 --account work-google
+bun run "$DALINAR_ROOT/modules/hoid/packages/cli/src/calendar-list.ts" --days 7 --json
+bun run "$DALINAR_ROOT/modules/hoid/packages/cli/src/calendar-list.ts" --from 2024-01-01 --to 2024-01-07 --account work-google
 ```
 
 ### Find Free Slots
 ```bash
-bun run modules/hoid/packages/cli/src/calendar-free-slots.ts --days 5 --min-duration 30 --working-hours 9-17 --json
+bun run "$DALINAR_ROOT/modules/hoid/packages/cli/src/calendar-free-slots.ts" --days 5 --min-duration 30 --working-hours 9-17 --json
 ```
 
 ### Create Event
 ```bash
-bun run modules/hoid/packages/cli/src/calendar-create.ts \
+bun run "$DALINAR_ROOT/modules/hoid/packages/cli/src/calendar-create.ts" \
   --title "Team Standup" \
   --start "2024-01-15T09:00:00" \
   --end "2024-01-15T09:30:00" \
@@ -68,19 +79,19 @@ bun run modules/hoid/packages/cli/src/calendar-create.ts \
 ### Move Event
 ```bash
 # Same account
-bun run modules/hoid/packages/cli/src/calendar-move.ts \
+bun run "$DALINAR_ROOT/modules/hoid/packages/cli/src/calendar-move.ts" \
   --event-id EVENT_ID --source work-google \
   --new-start "2024-01-15T10:00:00" --new-end "2024-01-15T10:30:00"
 
 # Cross-account (creates on target, deletes from source)
-bun run modules/hoid/packages/cli/src/calendar-move.ts \
+bun run "$DALINAR_ROOT/modules/hoid/packages/cli/src/calendar-move.ts" \
   --event-id EVENT_ID --source work-google --target personal-google \
   --new-start "2024-01-15T10:00:00" --new-end "2024-01-15T10:30:00"
 ```
 
 ### Detect Conflicts
 ```bash
-bun run modules/hoid/packages/cli/src/calendar-conflicts.ts --days 7 --json
+bun run "$DALINAR_ROOT/modules/hoid/packages/cli/src/calendar-conflicts.ts" --days 7 --json
 ```
 
 ## Orchestrator Integration
@@ -98,12 +109,12 @@ const conflicts = await hoidConflicts({ days: 7 })
 
 Run diagnostics on all accounts:
 ```bash
-bun run modules/hoid/packages/cli/src/calendar-auth.ts --doctor
+bun run "$DALINAR_ROOT/modules/hoid/packages/cli/src/calendar-auth.ts" --doctor
 ```
 
 Diagnose a single account:
 ```bash
-bun run modules/hoid/packages/cli/src/calendar-auth.ts --doctor --account work-google
+bun run "$DALINAR_ROOT/modules/hoid/packages/cli/src/calendar-auth.ts" --doctor --account work-google
 ```
 
 The `--doctor` command checks:
