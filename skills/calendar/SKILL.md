@@ -94,6 +94,26 @@ const slots = await hoidFreeSlots({ workingHours: "9-17", minDuration: 30 })
 const conflicts = await hoidConflicts({ days: 7 })
 ```
 
+## Troubleshooting
+
+Run diagnostics on all accounts:
+```bash
+bun run modules/hoid/packages/cli/src/calendar-auth.ts --doctor
+```
+
+Diagnose a single account:
+```bash
+bun run modules/hoid/packages/cli/src/calendar-auth.ts --doctor --account work-google
+```
+
+The `--doctor` command checks:
+- Config validity and token file presence
+- Token expiry status
+- Google: calendarId sanity, token refresh, Calendar API reachability
+- Microsoft: tenantId validity, auth flow compatibility, client secret configuration, token refresh, Graph API reachability
+
+Common issues and hints are shown automatically when API calls fail (e.g., API not enabled, wrong tenant, expired tokens).
+
 ## Config
 
 Location resolution: `$HOID_CONFIG` → `$XDG_CONFIG_HOME/hoid/hoid.config.json` → `~/.config/hoid/hoid.config.json`
