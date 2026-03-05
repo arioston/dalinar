@@ -65,15 +65,25 @@ dalinar/
 ## Getting Started
 
 ```bash
-# 1. Clone the repository
-git clone https://github.com/arioston/dalinar.git
+# 1. Clone with submodules (Jasnah, Sazed, Hoid)
+git clone --recursive https://github.com/arioston/dalinar.git
+cd dalinar
 
-# 2. Initialize submodules (Jasnah, Sazed, Hoid)
-git submodule update --init --recursive
-
-# 3. Install dependencies
-bun install
+# 2. Run full setup (submodules, deps, memory pack, skills, hooks, env)
+./setup.sh          # Linux / macOS
+setup.bat           # Windows
 ```
+
+The setup script is idempotent — safe to re-run at any time. It handles:
+- Git submodule initialization
+- `bun install`
+- Jasnah memory pack (`.memory/` directories, config)
+- OpenCode plugins and commands (symlinks)
+- Project and global Claude Code skills
+- `.env` file from template
+- Hoid calendar config
+
+> **Already cloned without `--recursive`?** The setup script detects this and runs `git submodule update --init --recursive` automatically.
 
 ## Sazed CLI (Direct Usage)
 
