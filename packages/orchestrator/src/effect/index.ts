@@ -52,3 +52,24 @@ export { dialecticPipeline } from "./pipelines/dialectic.js"
 export { implementTicketPipeline } from "./pipelines/implement.js"
 export { auditPipeline } from "./pipelines/audit.js"
 export { analyzeWithContextPipeline } from "./pipelines/analyze.js"
+
+export {
+  type TicketState,
+  Unclaimed,
+  Claimed,
+  InProgress,
+  Done,
+  Blocked,
+} from "./ticket/state.js"
+export type {
+  TicketAction,
+  ClaimAction,
+  StartProgressAction,
+  CompleteAction,
+  BlockAction,
+  UnblockAction,
+  ReleaseAction,
+} from "./ticket/actions.js"
+export { transition } from "./ticket/transitions.js"
+export { encodeTicketState, decodeTicketState, TicketStateSchema } from "./ticket/persistence.js"
+export { TicketStore, TicketStoreLive } from "./ticket/store.js"
