@@ -56,9 +56,23 @@ Dalinar orchestrates Jasnah (memory) and Sazed (planning) for AI-augmented devel
 
 - `packages/protocol/` — Shared types, retention math, secret filtering, vault config
 - `packages/orchestrator/` — Cross-system pipelines (analyze-with-context, implement-ticket, vault-sync)
+  - `src/effect/` — Effect.ts typed pipeline layer (see `packages/orchestrator/MIGRATION.md`)
 - `modules/jasnah/` — Memory extraction and retrieval (git submodule)
 - `modules/sazed/` — Epic analysis and task decomposition (git submodule)
 - `skills/` — Cross-project skills (worktrees, jira, dialectic)
+
+### Effect.ts Layer (packages/orchestrator/src/effect/)
+
+All 6 orchestrator pipelines have Effect.ts versions with typed errors, injectable services, and test layers. CLI entrypoints try the Effect pipeline first with a fallback to the original async function.
+
+- **Services**: `JasnahService`, `SazedService`, `HoidService` — Context.Tag services wrapping subprocess calls
+- **Errors**: `Schema.TaggedError` types — `SubprocessError`, `JasnahError`, `SazedError`, `VaultSyncError`, `FileOperationError`, `TicketStateError`, `ParseError`, `HoidError`
+- **Runtime**: `OrchestratorLive` layer + `runCli` helper for error-to-exit-code mapping
+- **Ticket protocol**: State machine with `Data.tagged` unions + `Match.value` exhaustive transitions
+- **WAL**: Crash-safe `orders-next.json → orders.json` promotion via `Effect.acquireRelease`
+- **Context snapshots**: Schema.Class types + SHA-256 content hashing + Ref-based caching
+
+Tests: `bun test packages/orchestrator/src/effect/`
 
 ## Conventions
 

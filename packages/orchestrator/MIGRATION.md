@@ -11,7 +11,7 @@ src/effect/
   errors.ts         — TaggedError types (SubprocessError, JasnahError, etc.)
   subprocess.ts     — SubprocessService wrapping Bun's $ in Effect
   services.ts       — JasnahService, SazedService, HoidService
-  runtime.ts        — OrchestratorLive layer + CorrelationContext FiberRef
+  runtime.ts        — OrchestratorLive layer + runCli helper
   index.ts          — Barrel exports
   pipelines/
     reflect.ts      — Reflect pipeline (worked example)
@@ -20,7 +20,42 @@ src/effect/
     implement.ts    — Implement-ticket pipeline
     audit.ts        — Audit pipeline
     analyze.ts      — Analyze-with-context pipeline (flagship)
+    pipelines.test.ts — Pipeline tests with test layers
+  ticket/
+    state.ts        — Data.tagged discriminated unions (Unclaimed, Claimed, etc.)
+    actions.ts      — Action types (ClaimAction, StartProgressAction, etc.)
+    transitions.ts  — Match.value exhaustive state machine
+    persistence.ts  — Schema codecs for disk I/O (decode-at-edge)
+    store.ts        — TicketStore service (file-based)
+    ticket.test.ts  — State machine + persistence tests
+  context/
+    schema.ts       — Schema.Class types (BacklogItem, MiseSnapshot, etc.)
+    hashing.ts      — Deterministic SHA-256 content hash
+    snapshot-service.ts — SnapshotService with Ref-based caching
+    context.test.ts — Schema + hashing + snapshot tests
+  wal/
+    schema.ts       — Order and OrderLog Schema.Class types
+    append.ts       — Idempotent WAL append (dedup by order.id)
+    promotion.ts    — acquireRelease crash-safe promotion
+    service.ts      — WALService Context.Tag
+    wal.test.ts     — Append + promotion tests
 ```
+
+## Migration Status
+
+| Phase | Status | Description |
+|-------|--------|-------------|
+| Phase 0 | Done | Shared infrastructure (errors, services, runtime, layers) |
+| Phase 1 | Done | All 6 pipelines migrated to Effect.gen chains |
+| Phase 2 | Done | Ticket state machine protocol |
+| Phase 3 | Done | Mise context snapshots with hash-based caching |
+| Phase 4 | Done | Write-ahead log with atomic promotion |
+
+### Not yet integrated (code exists, no consumer)
+
+- **TicketStore + WAL** — Ready to wire into implement-ticket when a consumer (dashboard, CLI command) needs order history
+- **SnapshotService** — Ready to enrich analyze pipeline when a data source feeds it
+- **Semaphore** — Not needed; CLI scripts are single-writer (exit after one run)
 
 ## Pattern: TaggedError
 
@@ -75,6 +110,51 @@ export const OrchestratorLive = Layer.mergeAll(
 ).pipe(Layer.provideMerge(SubprocessServiceLive))
 ```
 
+## Pattern: Ticket State Machine (Phase 2)
+
+Internal state uses `Data.tagged` discriminated unions — zero codec cost. Schema codecs are confined to `persistence.ts` for disk I/O only (decode-at-edge).
+
+```typescript
+// State (plain interface + Data.tagged constructor)
+export interface Claimed {
+  readonly _tag: "Claimed"
+  readonly ticketKey: string
+  readonly claimedBy: string
+  readonly claimedAt: string
+}
+export const Claimed = Data.tagged<Claimed>("Claimed")
+
+// Transitions via Match.value (exhaustive)
+export function transition(state: TicketState, action: TicketAction): TicketState | TicketStateError {
+  return Match.value(action).pipe(
+    Match.tag("ClaimAction", (a) => Match.value(state).pipe(
+      Match.tag("Unclaimed", () => Claimed({ ... })),
+      Match.orElse((s) => illegalTransition(s, a)),
+    )),
+    Match.exhaustive,
+  )
+}
+```
+
+## Pattern: WAL Promotion (Phase 4)
+
+Crash-safe `orders-next.json → orders.json` using `Effect.acquireRelease`:
+
+```typescript
+Effect.acquireRelease(
+  // Acquire: backup orders.json → orders.json.bak
+  backupEffect,
+  // Release: remove backup on success
+  cleanupEffect,
+).pipe(
+  Effect.andThen((backupPath) =>
+    // Use: load WAL, merge, dedup, write target, truncate WAL
+    mergeEffect,
+  ),
+  Effect.scoped,
+)
+```
+
 ## Worked Example: reflect pipeline
 
 ### Before (imperative)
@@ -85,36 +165,13 @@ export async function runReflection(
   opts: { dryRun?: boolean; root?: string } = {},
 ): Promise<{ entries: ExtractEntry[]; extractResult?: ... }> {
   console.log(`\n[dalinar] Processing retrospective for ${reflection.sprint}...\n`)
-
   const entries = reflectionToMemories(reflection)
-
   if (entries.length === 0) {
     console.log("[dalinar] No actionable entries from reflection.")
     return { entries }
   }
-
-  console.log(`[dalinar] Generated ${entries.length} memory entries:`)
-  for (const entry of entries) {
-    console.log(`  [${entry.type}] ${entry.summary}`)
-  }
-
-  if (opts.dryRun) {
-    console.log("\n[dalinar] Dry run — not extracting.")
-    return { entries }
-  }
-
-  console.log(`\n[dalinar] Extracting ${entries.length} entries to Jasnah...`)
-  const extractResult = await extractMemories(entries, {
-    root: opts.root,
-    source: `sprint-retro:${reflection.sprint}`,
-  })
-
-  if (extractResult.success) {
-    console.log(`[dalinar] Done. ${entries.length} reflections saved.`)
-  } else {
-    console.warn(`[dalinar] Extraction failed: ${extractResult.output}`)
-  }
-
+  // ...
+  const extractResult = await extractMemories(entries, { ... })
   return { entries, extractResult }
 }
 ```
@@ -127,43 +184,17 @@ export const reflectPipeline = (
   opts: ReflectOptions = {},
 ) =>
   Effect.gen(function* () {
-    yield* withSpan("reflect")
     const jasnah = yield* JasnahService
-
-    // Stage 1: Convert reflection to memory entries
     yield* Effect.log(`Processing retrospective for ${reflection.sprint}...`)
     const entries = reflectionToMemories(reflection)
-
     if (entries.length === 0) {
       yield* Effect.log("No actionable entries from reflection.")
       return { entries } satisfies ReflectResult
     }
-
-    yield* Effect.log(`Generated ${entries.length} memory entries:`)
-    for (const entry of entries) {
-      yield* Effect.log(`  [${entry.type}] ${entry.summary}`)
-    }
-
-    // Stage 2: Extract to Jasnah (unless dry run)
-    if (opts.dryRun) {
-      yield* Effect.log("Dry run — not extracting.")
-      return { entries } satisfies ReflectResult
-    }
-
-    yield* Effect.log(`Extracting ${entries.length} entries to Jasnah...`)
-    const extractResult = yield* jasnah.extractMemories(entries, {
-      root: opts.root,
-      source: `sprint-retro:${reflection.sprint}`,
-    })
-
-    if (extractResult.success) {
-      yield* Effect.log(`Done. ${entries.length} reflections saved.`)
-    } else {
-      yield* Effect.logWarning(`Extraction failed: ${extractResult.output}`)
-    }
-
+    // ...
+    const extractResult = yield* jasnah.extractMemories(entries, { ... })
     return { entries, extractResult } satisfies ReflectResult
-  })
+  }).pipe(Effect.withSpan("reflect"))
 ```
 
 ### Key differences
@@ -197,7 +228,7 @@ if (import.meta.main) {
 
 ## Tracing
 
-Pipelines use Effect's built-in tracing via `.pipe(Effect.withSpan("pipeline-name"))` at the end of each pipeline definition. This integrates with Effect's tracer system and properly scopes spans.
+Pipelines use Effect's built-in tracing via `.pipe(Effect.withSpan("pipeline-name"))` at the end of each pipeline definition.
 
 ## Effect.gen Convention
 
@@ -207,7 +238,7 @@ Pipeline bodies should be "single-screen" — stage calls only, no inline busine
 
 ```typescript
 import { Effect, Layer } from "effect"
-import { JasnahService } from "../services.js"
+import { JasnahService, SazedService } from "../services.js"
 import { reflectPipeline } from "./reflect.js"
 
 const TestJasnah = Layer.succeed(JasnahService, {
@@ -217,10 +248,28 @@ const TestJasnah = Layer.succeed(JasnahService, {
   formatContextForPrompt: () => Effect.succeed(""),
 })
 
-// Use in test:
+const TestSazed = Layer.succeed(SazedService, {
+  analyze: () => Effect.succeed({ success: true, markdown: "# Test" }),
+  syncToJira: () => Effect.succeed({ success: true, output: "ok" }),
+  checkStatus: () => Effect.succeed("ok"),
+  listNotes: () => Effect.succeed(""),
+  searchNotes: () => Effect.succeed(""),
+})
+
+// Compose and provide:
+const TestLayer = Layer.mergeAll(TestJasnah, TestSazed)
 const result = await Effect.runPromise(
-  reflectPipeline(testReflection, { dryRun: false }).pipe(
-    Effect.provide(TestJasnah),
+  analyzeWithContextPipeline({ epicKey: "EPIC-1" }).pipe(
+    Effect.provide(TestLayer),
   ),
 )
 ```
+
+## Test Coverage
+
+| Module | Tests | Coverage |
+|--------|-------|----------|
+| Pipelines (reflect, dialectic, analyze, implement, audit) | 20 | Happy path, error path, dry run, constraint generation, pure functions |
+| Ticket state machine | Transitions, illegal transitions, persistence roundtrip | All legal + illegal transitions |
+| Context snapshots | Schema validation, content hashing, snapshot service | Cache invalidation on hash change |
+| WAL | Append, dedup, promotion, rollback, idempotency | Normal + edge cases |
