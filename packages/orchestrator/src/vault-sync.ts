@@ -84,11 +84,22 @@ export async function initWorkLog(
 
 if (import.meta.main) {
   const root = process.argv[2] ?? process.cwd()
-  const result = await syncToVault(root)
 
-  if (result.synced) {
-    console.log(`[vault-sync] Synced to ${result.target}`)
-  } else {
-    console.log(`[vault-sync] Skipped: ${result.reason}`)
+  try {
+    const { Effect } = await import("effect")
+    const { vaultSyncPipeline } = await import("./effect/pipelines/vault-sync.js")
+    const result = await Effect.runPromise(vaultSyncPipeline(root))
+    if (result.synced) {
+      console.log(`[vault-sync] Synced to ${result.target}`)
+    } else {
+      console.log(`[vault-sync] Skipped: ${result.reason}`)
+    }
+  } catch {
+    const result = await syncToVault(root)
+    if (result.synced) {
+      console.log(`[vault-sync] Synced to ${result.target}`)
+    } else {
+      console.log(`[vault-sync] Skipped: ${result.reason}`)
+    }
   }
 }

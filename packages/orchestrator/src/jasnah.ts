@@ -23,10 +23,10 @@ export interface MemorySearchResult {
 
 export interface SearchOptions {
   query: string
-  root?: string
-  type?: string
-  limit?: number
-  tags?: string[]
+  root?: string | undefined
+  type?: string | undefined
+  limit?: number | undefined
+  tags?: string[] | undefined
 }
 
 export interface ExtractEntry {
@@ -139,7 +139,7 @@ export async function searchContextForEpic(
  */
 export async function extractMemories(
   entries: ExtractEntry[],
-  opts: { root?: string; source?: string; dryRun?: boolean } = {},
+  opts: { root?: string | undefined; source?: string | undefined; dryRun?: boolean | undefined } = {},
 ): Promise<{ success: boolean; output: string }> {
   if (entries.length === 0) return { success: true, output: "No entries to extract" }
 

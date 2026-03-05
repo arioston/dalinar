@@ -6,7 +6,9 @@
   "main": "src/index.ts",
   "types": "src/index.ts",
   "dependencies": {
-    "@dalinar/protocol": "workspace:*"
+    "@dalinar/protocol": "workspace:*",
+    "effect": "^3.19.17",
+    "@effect/platform": "^0.94.5"
   },
   "optionalDependencies": {
     "jasnah": "workspace:*",

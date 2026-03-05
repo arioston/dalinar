@@ -334,22 +334,37 @@ export async function runDialectic(input: DialecticInput, root?: string): Promis
 if (import.meta.main) {
   const opts = parseArgs(process.argv)
 
-  const result = await runDialectic({ question: opts.question }, opts.root)
+  const printResult = (result: Awaited<ReturnType<typeof runDialectic>>) => {
+    console.log("\n" + "=".repeat(60))
+    console.log("## Agent A Prompt")
+    console.log("=".repeat(60))
+    console.log(result.prompts.positionA)
 
-  console.log("\n" + "=".repeat(60))
-  console.log("## Agent A Prompt")
-  console.log("=".repeat(60))
-  console.log(result.prompts.positionA)
+    console.log("\n" + "=".repeat(60))
+    console.log("## Agent B Prompt")
+    console.log("=".repeat(60))
+    console.log(result.prompts.positionB)
 
-  console.log("\n" + "=".repeat(60))
-  console.log("## Agent B Prompt")
-  console.log("=".repeat(60))
-  console.log(result.prompts.positionB)
+    console.log("\n" + "=".repeat(60))
+    console.log("## Synthesis Prompt")
+    console.log("=".repeat(60))
+    console.log(result.prompts.synthesis)
 
-  console.log("\n" + "=".repeat(60))
-  console.log("## Synthesis Prompt")
-  console.log("=".repeat(60))
-  console.log(result.prompts.synthesis)
+    console.log("\n[dalinar] Run each prompt in isolated agent contexts, then combine with the synthesis prompt.")
+  }
 
-  console.log("\n[dalinar] Run each prompt in isolated agent contexts, then combine with the synthesis prompt.")
+  try {
+    const { Effect } = await import("effect")
+    const { dialecticPipeline } = await import("./effect/pipelines/dialectic.js")
+    const { OrchestratorLive } = await import("./effect/runtime.js")
+    const result = await Effect.runPromise(
+      dialecticPipeline({ question: opts.question }, opts.root).pipe(
+        Effect.provide(OrchestratorLive),
+      ),
+    )
+    printResult(result)
+  } catch {
+    const result = await runDialectic({ question: opts.question }, opts.root)
+    printResult(result)
+  }
 }

@@ -1,5 +1,7 @@
 // @dalinar/orchestrator — cross-system pipelines
 
+export * from "./effect/index.js"
+
 export {
   searchMemories,
   searchContextForEpic,

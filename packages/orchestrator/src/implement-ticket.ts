@@ -168,7 +168,7 @@ export async function implementTicket(opts: ImplementOptions): Promise<Implement
 export async function postImplementExtract(
   ticketKey: string,
   sessionNotes: ExtractEntry[],
-  root?: string,
+  root?: string | undefined,
 ): Promise<void> {
   console.log(`\n[dalinar] Extracting session memories for ${ticketKey}...`)
   const result = await extractMemories(sessionNotes, {
@@ -187,5 +187,31 @@ export async function postImplementExtract(
 
 if (import.meta.main) {
   const opts = parseArgs(process.argv)
-  await implementTicket(opts)
+
+  try {
+    const { Effect } = await import("effect")
+    const { implementTicketPipeline } = await import("./effect/pipelines/implement.js")
+    const { OrchestratorLive } = await import("./effect/runtime.js")
+    const context = await Effect.runPromise(
+      implementTicketPipeline(opts).pipe(Effect.provide(OrchestratorLive)),
+    )
+
+    // Output the implementation context (matches original format)
+    console.log("\n" + "=".repeat(60))
+    console.log(`## Implementation Context for ${context.ticketKey}\n`)
+    if (context.priorContext) console.log(context.priorContext)
+    if (context.analysisMarkdown) {
+      console.log("## Sazed Analysis\n")
+      console.log(context.analysisMarkdown)
+    }
+    if (context.worktreePath) {
+      console.log(`## Worktree\n`)
+      console.log(`Path: ${context.worktreePath}`)
+      console.log(`Branch: ${context.worktreeBranch}`)
+      console.log(`\nSwitch to worktree: cd ${context.worktreePath}`)
+    }
+    console.log("\n" + "=".repeat(60))
+  } catch {
+    await implementTicket(opts)
+  }
 }

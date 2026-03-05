@@ -228,5 +228,20 @@ if (import.meta.main) {
     process.exit(0)
   }
 
-  await runReflection(reflection, { dryRun: opts.dryRun, root: opts.root })
+  // Use Effect pipeline with fallback to original
+  try {
+    const { Effect } = await import("effect")
+    const { reflectPipeline } = await import("./effect/pipelines/reflect.js")
+    const { OrchestratorLive } = await import("./effect/runtime.js")
+    const result = await Effect.runPromise(
+      reflectPipeline(reflection, { dryRun: opts.dryRun, root: opts.root }).pipe(
+        Effect.provide(OrchestratorLive),
+      ),
+    )
+    // Pipeline handles logging internally
+    void result
+  } catch {
+    // Fallback to original implementation if Effect not available
+    await runReflection(reflection, { dryRun: opts.dryRun, root: opts.root })
+  }
 }

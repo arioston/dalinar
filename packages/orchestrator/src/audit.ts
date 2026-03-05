@@ -41,7 +41,7 @@ export interface AuditReport {
   findings: AuditFinding[]
   tagFrequency: Record<string, number>
   typeDistribution: Record<string, number>
-  projects?: { name: string; count: number }[]
+  projects?: { name: string; count: number }[] | undefined
 }
 
 interface MemoryEntry {
@@ -51,14 +51,14 @@ interface MemoryEntry {
   content: string
   tags: string[]
   confidence: string
-  createdAt?: string
-  source?: string
-  project?: string
+  createdAt?: string | undefined
+  source?: string | undefined
+  project?: string | undefined
 }
 
 // ── CLI parsing ───────────────────────────────────────────────────
 
-function parseArgs(argv: string[]): { root: string; roots?: string; extract: boolean; json: boolean } {
+function parseArgs(argv: string[]): { root: string; roots?: string | undefined; extract: boolean; json: boolean } {
   const args = argv.slice(2)
   const rootsIdx = args.indexOf("--roots")
   return {
@@ -452,27 +452,40 @@ function findingsToExtractEntries(findings: AuditFinding[]): ExtractEntry[] {
 if (import.meta.main) {
   const opts = parseArgs(process.argv)
 
-  console.log("[dalinar] Running audit...\n")
-  const report = await runAudit(opts.root, opts.roots)
+  try {
+    const { Effect } = await import("effect")
+    const { auditPipeline } = await import("./effect/pipelines/audit.js")
+    const { OrchestratorLive } = await import("./effect/runtime.js")
+    await Effect.runPromise(
+      auditPipeline(opts.root, {
+        rootsBase: opts.roots,
+        extract: opts.extract,
+        json: opts.json,
+      }).pipe(Effect.provide(OrchestratorLive)),
+    )
+  } catch {
+    console.log("[dalinar] Running audit...\n")
+    const report = await runAudit(opts.root, opts.roots)
 
-  if (opts.json) {
-    console.log(JSON.stringify(report, null, 2))
-  } else {
-    console.log(formatReport(report))
-  }
+    if (opts.json) {
+      console.log(JSON.stringify(report, null, 2))
+    } else {
+      console.log(formatReport(report))
+    }
 
-  if (opts.extract && report.findings.length > 0) {
-    const entries = findingsToExtractEntries(report.findings)
-    if (entries.length > 0) {
-      console.log(`\n[dalinar] Extracting ${entries.length} audit findings as memories...`)
-      const result = await extractMemories(entries, {
-        root: opts.root,
-        source: `audit-${new Date().toISOString().slice(0, 10)}`,
-      })
-      if (result.success) {
-        console.log(`[dalinar] Done. ${entries.length} findings saved.`)
-      } else {
-        console.warn(`[dalinar] Extraction failed: ${result.output}`)
+    if (opts.extract && report.findings.length > 0) {
+      const entries = findingsToExtractEntries(report.findings)
+      if (entries.length > 0) {
+        console.log(`\n[dalinar] Extracting ${entries.length} audit findings as memories...`)
+        const result = await extractMemories(entries, {
+          root: opts.root,
+          source: `audit-${new Date().toISOString().slice(0, 10)}`,
+        })
+        if (result.success) {
+          console.log(`[dalinar] Done. ${entries.length} findings saved.`)
+        } else {
+          console.warn(`[dalinar] Extraction failed: ${result.output}`)
+        }
       }
     }
   }

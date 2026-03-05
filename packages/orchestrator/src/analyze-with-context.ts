@@ -148,5 +148,15 @@ export async function analyzeWithContext(opts: AnalyzeOptions & { root?: string 
 
 if (import.meta.main) {
   const opts = parseArgs(process.argv)
-  await analyzeWithContext(opts)
+
+  try {
+    const { Effect } = await import("effect")
+    const { analyzeWithContextPipeline } = await import("./effect/pipelines/analyze.js")
+    const { OrchestratorLive } = await import("./effect/runtime.js")
+    await Effect.runPromise(
+      analyzeWithContextPipeline(opts).pipe(Effect.provide(OrchestratorLive)),
+    )
+  } catch {
+    await analyzeWithContext(opts)
+  }
 }

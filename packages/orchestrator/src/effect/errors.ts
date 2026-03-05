@@ -1,0 +1,51 @@
+import { Schema } from "effect"
+
+export class SubprocessError extends Schema.TaggedError<SubprocessError>()("SubprocessError", {
+  message: Schema.String,
+  command: Schema.optional(Schema.String),
+  exitCode: Schema.optional(Schema.Number),
+  stderr: Schema.optional(Schema.String),
+  cause: Schema.optional(Schema.Unknown),
+}) {}
+
+export class JasnahError extends Schema.TaggedError<JasnahError>()("JasnahError", {
+  message: Schema.String,
+  operation: Schema.optional(Schema.String),
+  cause: Schema.optional(Schema.Unknown),
+}) {}
+
+export class SazedError extends Schema.TaggedError<SazedError>()("SazedError", {
+  message: Schema.String,
+  epicKey: Schema.optional(Schema.String),
+  cause: Schema.optional(Schema.Unknown),
+}) {}
+
+export class VaultSyncError extends Schema.TaggedError<VaultSyncError>()("VaultSyncError", {
+  message: Schema.String,
+  cause: Schema.optional(Schema.Unknown),
+}) {}
+
+export class FileOperationError extends Schema.TaggedError<FileOperationError>()("FileOperationError", {
+  message: Schema.String,
+  filePath: Schema.optional(Schema.String),
+  cause: Schema.optional(Schema.Unknown),
+}) {}
+
+export class TicketStateError extends Schema.TaggedError<TicketStateError>()("TicketStateError", {
+  message: Schema.String,
+  ticketKey: Schema.optional(Schema.String),
+  fromState: Schema.optional(Schema.String),
+  toState: Schema.optional(Schema.String),
+}) {}
+
+export class ParseError extends Schema.TaggedError<ParseError>()("ParseError", {
+  message: Schema.String,
+  input: Schema.optional(Schema.String),
+  cause: Schema.optional(Schema.Unknown),
+}) {}
+
+export class HoidError extends Schema.TaggedError<HoidError>()("HoidError", {
+  message: Schema.String,
+  operation: Schema.optional(Schema.String),
+  cause: Schema.optional(Schema.Unknown),
+}) {}
