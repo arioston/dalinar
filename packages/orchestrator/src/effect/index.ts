@@ -73,3 +73,18 @@ export type {
 export { transition } from "./ticket/transitions.js"
 export { encodeTicketState, decodeTicketState, TicketStateSchema } from "./ticket/persistence.js"
 export { TicketStore, TicketStoreLive } from "./ticket/store.js"
+
+export {
+  BacklogItem,
+  CapacitySnapshot,
+  HistoryEntry,
+  MiseSnapshot,
+  MiseSnapshotJson,
+} from "./context/schema.js"
+export { contentHash } from "./context/hashing.js"
+export {
+  SnapshotService,
+  SnapshotServiceLive,
+  type SnapshotInput,
+  type SnapshotServiceShape,
+} from "./context/snapshot-service.js"
