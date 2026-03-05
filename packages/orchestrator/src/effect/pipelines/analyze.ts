@@ -1,42 +1,9 @@
 import { Effect } from "effect"
-import { JasnahService, SazedService, type AnalyzeOptions, type ExtractEntry } from "../services.js"
+import { JasnahService, SazedService, type AnalyzeOptions } from "../services.js"
 import { SazedError } from "../errors.js"
 import { vaultSyncPipeline } from "./vault-sync.js"
-
-function extractNotesFromAnalysis(
-  markdown: string,
-  epicKey: string,
-): ExtractEntry[] {
-  const entries: ExtractEntry[] = []
-
-  const contextMatch = markdown.match(
-    /## Context Summary\n([\s\S]*?)(?=\n## |\n---|\Z)/,
-  )
-  if (contextMatch && contextMatch[1].trim().length > 50) {
-    entries.push({
-      type: "architecture",
-      summary: `Architecture context for ${epicKey}`,
-      content: contextMatch[1].trim().slice(0, 500),
-      tags: [epicKey.toLowerCase(), "epic-analysis"],
-      confidence: "medium",
-    })
-  }
-
-  const commMatch = markdown.match(
-    /## Communication Flow\n([\s\S]*?)(?=\n## |\n---|\Z)/,
-  )
-  if (commMatch && commMatch[1].trim().length > 50) {
-    entries.push({
-      type: "api-contract",
-      summary: `Integration points for ${epicKey}`,
-      content: commMatch[1].trim().slice(0, 500),
-      tags: [epicKey.toLowerCase(), "integration"],
-      confidence: "medium",
-    })
-  }
-
-  return entries
-}
+import { extractNotesFromAnalysis } from "../../extract-notes.js"
+import { resolveKey } from "../../resolve-key.js"
 
 // ── Effect pipeline ────────────────────────────────────────────────
 
@@ -47,18 +14,48 @@ export const analyzeWithContextPipeline = (
     const jasnah = yield* JasnahService
     const sazed = yield* SazedService
 
-    const { epicKey, root } = opts
+    // Stage 0: Resolve key (task → parent epic)
+    const resolved = yield* Effect.tryPromise({
+      try: () => resolveKey(opts.epicKey),
+      catch: () => null,
+    }).pipe(Effect.orElseSucceed(() => null))
+
+    const epicKey = resolved?.epicKey ?? opts.epicKey
+    const taskKey = resolved?.taskKey
+
+    if (taskKey) {
+      yield* Effect.log(`Resolved task ${taskKey} (${resolved?.issueType}) → epic ${epicKey}`)
+    }
 
     yield* Effect.log(`Analyzing ${epicKey} with context...`)
 
     // Stage 1: Search Jasnah for prior context
     yield* Effect.log("Step 1: Searching Jasnah for prior context...")
-    const memories = yield* jasnah.searchContextForEpic(epicKey, root)
+    const memories = yield* jasnah.searchContextForEpic(epicKey, opts.root)
 
-    if (memories.length > 0) {
-      yield* Effect.log(`  Found ${memories.length} relevant memories`)
-      const contextBlock = yield* jasnah.formatContextForPrompt(memories)
-      // Inject context for Sazed subprocess
+    // If task resolved, also search for task-specific context
+    if (resolved?.taskSummary) {
+      const taskMemories = yield* jasnah.searchContextForEpic(
+        resolved.taskSummary,
+        opts.root,
+      )
+      const seen = new Set(memories.map((m) => m.memory_id))
+      for (const m of taskMemories) {
+        if (!seen.has(m.memory_id)) {
+          ;(memories as any[]).push(m)
+          seen.add(m.memory_id)
+        }
+      }
+    }
+
+    // Cap at 10 results after merge
+    const capped = [...memories]
+      .sort((a, b) => b.score - a.score)
+      .slice(0, 10)
+
+    if (capped.length > 0) {
+      yield* Effect.log(`  Found ${capped.length} relevant memories`)
+      const contextBlock = yield* jasnah.formatContextForPrompt(capped)
       yield* Effect.sync(() => {
         process.env.DALINAR_CONTEXT = contextBlock
       })
@@ -68,7 +65,7 @@ export const analyzeWithContextPipeline = (
 
     // Stage 2: Run Sazed analysis
     yield* Effect.log(`Step 2: Running Sazed analysis for ${epicKey}...`)
-    const result = yield* sazed.analyze(opts)
+    const result = yield* sazed.analyze({ ...opts, epicKey })
 
     if (!result.success) {
       return yield* new SazedError({
@@ -81,12 +78,19 @@ export const analyzeWithContextPipeline = (
 
     // Stage 3: Extract new domain knowledge back to Jasnah
     yield* Effect.log("Step 3: Extracting domain knowledge back to Jasnah...")
-    const newNotes = extractNotesFromAnalysis(result.markdown, epicKey)
+    const newNotes = extractNotesFromAnalysis(result.markdown, {
+      epicKey,
+      taskKey,
+    })
+
+    const source = taskKey
+      ? `dalinar-analyze-${epicKey}-task-${taskKey}`
+      : `dalinar-analyze-${epicKey}`
 
     if (newNotes.length > 0) {
       const extraction = yield* jasnah.extractMemories(newNotes, {
-        root,
-        source: `dalinar-analyze-${epicKey}`,
+        root: opts.root,
+        source,
       })
       if (extraction.success) {
         yield* Effect.log(
@@ -103,7 +107,7 @@ export const analyzeWithContextPipeline = (
 
     // Stage 4: Vault sync
     yield* Effect.log("Step 4: Vault sync...")
-    const vaultResult = yield* vaultSyncPipeline(root)
+    const vaultResult = yield* vaultSyncPipeline(opts.root)
     if (vaultResult.synced) {
       yield* Effect.log(`  Synced to ${vaultResult.target}`)
     } else {
@@ -115,8 +119,8 @@ export const analyzeWithContextPipeline = (
     yield* Effect.log(result.markdown)
     yield* Effect.log("=".repeat(60))
     yield* Effect.log(
-      `Done. ${epicKey} analyzed with ${memories.length} prior context entries.`,
+      `Done. ${epicKey} analyzed with ${capped.length} prior context entries.`,
     )
 
-    return { markdown: result.markdown, memoriesUsed: memories.length }
+    return { markdown: result.markdown, memoriesUsed: capped.length }
   }).pipe(Effect.withSpan("analyze-with-context"))

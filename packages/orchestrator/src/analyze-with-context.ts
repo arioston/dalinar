@@ -2,18 +2,22 @@
 /**
  * analyze-with-context — The core Dalinar pipeline.
  *
- * 1. Search Jasnah memories for prior context related to the epic
- * 2. Run Sazed analysis with that context injected
- * 3. Extract new domain knowledge back to Jasnah
+ * 1. Resolve key (task → parent epic if needed)
+ * 2. Search Jasnah memories for prior context related to the epic
+ * 3. Run Sazed analysis with that context injected
+ * 4. Extract new domain knowledge back to Jasnah
  *
  * Usage:
  *   bun run packages/orchestrator/src/analyze-with-context.ts EPIC-123
+ *   bun run packages/orchestrator/src/analyze-with-context.ts PROJ-456  # task key — resolves to parent epic
  *   bun run packages/orchestrator/src/analyze-with-context.ts EPIC-123 --force --notes
  */
 
-import { searchContextForEpic, extractMemories, formatContextForPrompt, type ExtractEntry } from "./jasnah.js"
+import { searchContextForEpic, extractMemories, formatContextForPrompt, type MemorySearchResult } from "./jasnah.js"
 import { analyze, type AnalyzeOptions } from "./sazed.js"
 import { syncToVault } from "./vault-sync.js"
+import { extractNotesFromAnalysis } from "./extract-notes.js"
+import { resolveKey } from "./resolve-key.js"
 
 // ── CLI parsing ───────────────────────────────────────────────────
 
@@ -21,7 +25,7 @@ function parseArgs(argv: string[]): AnalyzeOptions & { root?: string } {
   const args = argv.slice(2)
   const epicKey = args.find((a) => !a.startsWith("--"))
   if (!epicKey) {
-    console.error("Usage: analyze-with-context <EPIC-KEY> [--force] [--notes] [--no-map] [--no-cache] [--forensics]")
+    console.error("Usage: analyze-with-context <KEY> [--force] [--notes] [--no-map] [--no-cache] [--forensics]")
     process.exit(1)
   }
 
@@ -36,51 +40,22 @@ function parseArgs(argv: string[]): AnalyzeOptions & { root?: string } {
   }
 }
 
-// ── Extract notes from analysis markdown ──────────────────────────
-
-/**
- * Parse the Sazed analysis output to extract potential domain knowledge
- * entries that should be fed back into Jasnah.
- *
- * Looks for patterns like:
- * - Technical definitions and constraints
- * - Architecture decisions made during analysis
- * - API contracts discovered
- */
-function extractNotesFromAnalysis(markdown: string, epicKey: string): ExtractEntry[] {
-  const entries: ExtractEntry[] = []
-
-  // Extract the context summary as an architecture note
-  const contextMatch = markdown.match(/## Context Summary\n([\s\S]*?)(?=\n## |\n---|\Z)/)
-  if (contextMatch && contextMatch[1].trim().length > 50) {
-    entries.push({
-      type: "architecture",
-      summary: `Architecture context for ${epicKey}`,
-      content: contextMatch[1].trim().slice(0, 500),
-      tags: [epicKey.toLowerCase(), "epic-analysis"],
-      confidence: "medium",
-    })
-  }
-
-  // Extract communication flows as api-contract notes
-  const commMatch = markdown.match(/## Communication Flow\n([\s\S]*?)(?=\n## |\n---|\Z)/)
-  if (commMatch && commMatch[1].trim().length > 50) {
-    entries.push({
-      type: "api-contract",
-      summary: `Integration points for ${epicKey}`,
-      content: commMatch[1].trim().slice(0, 500),
-      tags: [epicKey.toLowerCase(), "integration"],
-      confidence: "medium",
-    })
-  }
-
-  return entries
-}
-
 // ── Main pipeline ─────────────────────────────────────────────────
 
 export async function analyzeWithContext(opts: AnalyzeOptions & { root?: string }): Promise<void> {
-  const { epicKey, root } = opts
+  const { root } = opts
+  let epicKey = opts.epicKey
+  let taskKey: string | undefined
+
+  // Step 0: Resolve key (task → parent epic)
+  const resolved = await resolveKey(epicKey)
+  if (resolved) {
+    epicKey = resolved.epicKey
+    taskKey = resolved.taskKey
+    if (taskKey) {
+      console.log(`[dalinar] Resolved task ${taskKey} (${resolved.issueType}) → epic ${epicKey}`)
+    }
+  }
 
   console.log(`\n[dalinar] Analyzing ${epicKey} with context...\n`)
 
@@ -88,12 +63,25 @@ export async function analyzeWithContext(opts: AnalyzeOptions & { root?: string 
   console.log("[dalinar] Step 1: Searching Jasnah for prior context...")
   const memories = await searchContextForEpic(epicKey, root)
 
+  // If task resolved, also search for task-specific context
+  if (resolved?.taskSummary) {
+    const taskMemories = await searchContextForEpic(resolved.taskSummary, root)
+    const seen = new Set(memories.map((m) => m.memory_id))
+    for (const m of taskMemories) {
+      if (!seen.has(m.memory_id)) {
+        memories.push(m)
+        seen.add(m.memory_id)
+      }
+    }
+  }
+
+  // Cap at 10 results after merge
+  memories.sort((a: MemorySearchResult, b: MemorySearchResult) => b.score - a.score)
+  if (memories.length > 10) memories.length = 10
+
   if (memories.length > 0) {
     console.log(`[dalinar]   Found ${memories.length} relevant memories`)
     const contextBlock = formatContextForPrompt(memories)
-
-    // Inject context via environment variable for Sazed to pick up
-    // Sazed's LLM prompt can read DALINAR_CONTEXT if available
     process.env.DALINAR_CONTEXT = contextBlock
   } else {
     console.log("[dalinar]   No prior context found (clean slate)")
@@ -101,7 +89,7 @@ export async function analyzeWithContext(opts: AnalyzeOptions & { root?: string 
 
   // Step 2: Run Sazed analysis
   console.log(`[dalinar] Step 2: Running Sazed analysis for ${epicKey}...`)
-  const result = await analyze(opts)
+  const result = await analyze({ ...opts, epicKey })
 
   if (!result.success) {
     console.error(`[dalinar] Analysis failed:\n${result.markdown}`)
@@ -112,13 +100,14 @@ export async function analyzeWithContext(opts: AnalyzeOptions & { root?: string 
 
   // Step 3: Extract new domain knowledge back to Jasnah
   console.log("[dalinar] Step 3: Extracting domain knowledge back to Jasnah...")
-  const newNotes = extractNotesFromAnalysis(result.markdown, epicKey)
+  const newNotes = extractNotesFromAnalysis(result.markdown, { epicKey, taskKey })
+
+  const source = taskKey
+    ? `dalinar-analyze-${epicKey}-task-${taskKey}`
+    : `dalinar-analyze-${epicKey}`
 
   if (newNotes.length > 0) {
-    const extraction = await extractMemories(newNotes, {
-      root,
-      source: `dalinar-analyze-${epicKey}`,
-    })
+    const extraction = await extractMemories(newNotes, { root, source })
     if (extraction.success) {
       console.log(`[dalinar]   Extracted ${newNotes.length} notes back to Jasnah`)
     } else {
