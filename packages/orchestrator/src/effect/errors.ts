@@ -49,3 +49,10 @@ export class HoidError extends Schema.TaggedError<HoidError>()("HoidError", {
   operation: Schema.optional(Schema.String),
   cause: Schema.optional(Schema.Unknown),
 }) {}
+
+export class JiraError extends Schema.TaggedError<JiraError>()("JiraError", {
+  message: Schema.String,
+  operation: Schema.optional(Schema.String),
+  key: Schema.optional(Schema.String),
+  cause: Schema.optional(Schema.Unknown),
+}) {}

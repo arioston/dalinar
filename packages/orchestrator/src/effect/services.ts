@@ -239,6 +239,7 @@ export const JasnahServiceLive = Layer.effect(JasnahService, makeJasnah)
 
 export interface AnalyzeOptions {
   epicKey: string
+  context?: string | undefined
   force?: boolean
   notes?: boolean
   noMap?: boolean
@@ -296,12 +297,13 @@ function sazedCli(): string {
 const makeSazed = Effect.gen(function* () {
   const subprocess = yield* SubprocessService
 
-  const runSazed = (args: string[]) =>
+  const runSazed = (args: string[], env?: Record<string, string | undefined>) =>
     subprocess
       .run(sazedCli(), {
         args,
         cwd: resolveSazedRoot(),
         nothrow: true,
+        env,
       })
       .pipe(
         Effect.mapError(
@@ -323,7 +325,8 @@ const makeSazed = Effect.gen(function* () {
       if (opts.forensics) args.push("--forensics")
       args.push("--stdout")
 
-      const result = yield* runSazed(args)
+      const env = opts.context ? { DALINAR_CONTEXT: opts.context } : undefined
+      const result = yield* runSazed(args, env)
 
       if (result.exitCode !== 0) {
         return {
@@ -577,3 +580,13 @@ const makeHoid = Effect.gen(function* () {
 })
 
 export const HoidServiceLive = Layer.effect(HoidService, makeHoid)
+
+// ── Project Root ────────────────────────────────────────────────
+
+export class ProjectRoot extends Context.Tag("@dalinar/ProjectRoot")<
+  ProjectRoot,
+  { readonly root: string }
+>() {}
+
+export const ProjectRootLive = (root: string) =>
+  Layer.succeed(ProjectRoot, { root })

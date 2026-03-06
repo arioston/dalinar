@@ -24,8 +24,6 @@ export {
   type SyncResult,
 } from "./sazed.js"
 
-export { analyzeWithContext } from "./analyze-with-context.js"
-
 export { implementTicket, postImplementExtract } from "./implement-ticket.js"
 
 export { runAudit, type AuditReport, type AuditFinding } from "./audit.js"

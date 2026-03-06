@@ -9,6 +9,7 @@ import type {
   HoidError,
   FileOperationError,
   ParseError,
+  JiraError,
 } from "./errors.js"
 
 // ── Layer composition ──────────────────────────────────────────────
@@ -29,6 +30,7 @@ type OrchestratorError =
   | HoidError
   | FileOperationError
   | ParseError
+  | JiraError
 
 export const runCli = (
   effect: Effect.Effect<void, OrchestratorError, never>,
