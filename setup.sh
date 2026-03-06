@@ -15,7 +15,9 @@ SKILLS_DIR="${SCRIPT_DIR}/skills"
 JASNAH_DIR="${SCRIPT_DIR}/modules/jasnah"
 SAZED_DIR="${SCRIPT_DIR}/modules/sazed"
 HOID_DIR="${SCRIPT_DIR}/modules/hoid"
+HOID_SKILLS_DIR="${HOID_DIR}/packages/skills"
 MEMORY_DIR="${SCRIPT_DIR}/.memory"
+HOID_GLOBAL_SKILLS=(gsap-react image-to-webp sanity-tools)
 
 ok()   { echo "  [ok] $1"; }
 skip() { echo "  [skip] $1 (already exists)"; }
@@ -124,6 +126,12 @@ for skill in jasnah-debug-trace jasnah-query jasnah-search-memory jasnah-export-
   fi
 done
 
+for skill in "${HOID_GLOBAL_SKILLS[@]}"; do
+  if [ -d "${HOID_SKILLS_DIR}/${skill}" ] && [ -f "${HOID_SKILLS_DIR}/${skill}/SKILL.md" ]; then
+    symlink_or_replace "../modules/hoid/packages/skills/${skill}" "${SKILLS_DIR}/${skill}"
+  fi
+done
+
 # ── 7. Global Claude Code skills (~/.claude/skills/) ──────────
 
 info "Linking global Claude Code skills"
@@ -132,7 +140,7 @@ GLOBAL_SKILLS="${CLAUDE_GLOBAL}/skills"
 mkdir -p "$GLOBAL_SKILLS"
 
 # Dalinar-owned skills that should be available globally
-for skill in calendar dialectic jira; do
+for skill in calendar dialectic jira "${HOID_GLOBAL_SKILLS[@]}"; do
   if [ -d "${SKILLS_DIR}/${skill}" ]; then
     symlink_or_replace "${SKILLS_DIR}/${skill}" "${GLOBAL_SKILLS}/${skill}"
   fi

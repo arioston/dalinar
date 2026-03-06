@@ -17,7 +17,9 @@ set "SKILLS_DIR=%SCRIPT_DIR%\skills"
 set "JASNAH_DIR=%SCRIPT_DIR%\modules\jasnah"
 set "SAZED_DIR=%SCRIPT_DIR%\modules\sazed"
 set "HOID_DIR=%SCRIPT_DIR%\modules\hoid"
+set "HOID_SKILLS_DIR=%HOID_DIR%\packages\skills"
 set "MEMORY_DIR=%SCRIPT_DIR%\.memory"
+set "HOID_GLOBAL_SKILLS=gsap-react image-to-webp sanity-tools"
 
 REM ── 1. Git submodules ──────────────────────────────────────────
 
@@ -129,6 +131,22 @@ for %%S in (jasnah-debug-trace jasnah-query jasnah-search-memory jasnah-export-m
     )
 )
 
+for %%S in (%HOID_GLOBAL_SKILLS%) do (
+    if exist "%HOID_SKILLS_DIR%\%%S\SKILL.md" (
+        if not exist "%SKILLS_DIR%\%%S" (
+            mklink /D "%SKILLS_DIR%\%%S" "%HOID_SKILLS_DIR%\%%S" >nul 2>&1
+            if !errorlevel! neq 0 (
+                xcopy /E /I /Q "%HOID_SKILLS_DIR%\%%S" "%SKILLS_DIR%\%%S" >nul
+                echo   [ok] Copied Hoid skill %%S
+            ) else (
+                echo   [ok] Symlinked Hoid skill %%S
+            )
+        ) else (
+            echo   [skip] Hoid skill %%S
+        )
+    )
+)
+
 REM ── 6. Global Claude Code skills ────────────────────────────────
 
 echo.
@@ -137,7 +155,7 @@ echo ==^> Linking global Claude Code skills
 set "GLOBAL_SKILLS=%CLAUDE_GLOBAL%\skills"
 if not exist "%GLOBAL_SKILLS%" mkdir "%GLOBAL_SKILLS%"
 
-for %%S in (calendar dialectic jira) do (
+for %%S in (calendar dialectic jira %HOID_GLOBAL_SKILLS%) do (
     if exist "%SKILLS_DIR%\%%S" (
         if not exist "%GLOBAL_SKILLS%\%%S" (
             mklink /D "%GLOBAL_SKILLS%\%%S" "%SKILLS_DIR%\%%S" >nul 2>&1
