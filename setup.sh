@@ -22,6 +22,46 @@ HOID_GLOBAL_SKILLS=(gsap-react image-to-webp sanity-tools)
 ok()   { echo "  [ok] $1"; }
 skip() { echo "  [skip] $1 (already exists)"; }
 info() { echo ""; echo "==> $1"; }
+warn() { echo "  [warn] $1"; }
+
+run_with_optional_sudo() {
+  if command -v sudo >/dev/null 2>&1; then
+    sudo "$@"
+  else
+    "$@"
+  fi
+}
+
+install_ripgrep() {
+  if command -v rg >/dev/null 2>&1; then
+    skip "ripgrep (rg)"
+    return
+  fi
+
+  echo "  ripgrep (rg) not found; attempting installation..."
+
+  if command -v brew >/dev/null 2>&1; then
+    brew install ripgrep || warn "brew install ripgrep failed"
+  elif command -v apt-get >/dev/null 2>&1; then
+    run_with_optional_sudo apt-get update -qq && run_with_optional_sudo apt-get install -y -qq ripgrep || warn "apt-get install ripgrep failed"
+  elif command -v dnf >/dev/null 2>&1; then
+    run_with_optional_sudo dnf install -y -q ripgrep || warn "dnf install ripgrep failed"
+  elif command -v yum >/dev/null 2>&1; then
+    run_with_optional_sudo yum install -y -q ripgrep || warn "yum install ripgrep failed"
+  elif command -v pacman >/dev/null 2>&1; then
+    run_with_optional_sudo pacman -S --noconfirm ripgrep || warn "pacman install ripgrep failed"
+  elif command -v apk >/dev/null 2>&1; then
+    run_with_optional_sudo apk add ripgrep || warn "apk add ripgrep failed"
+  else
+    warn "No supported package manager found to install ripgrep automatically"
+  fi
+
+  if command -v rg >/dev/null 2>&1; then
+    ok "ripgrep (rg) installed"
+  else
+    warn "ripgrep (rg) still unavailable; install manually to enable fast search"
+  fi
+}
 
 symlink_or_replace() {
   local src="$1" dst="$2"
@@ -55,6 +95,8 @@ info "Installing dependencies"
 
 bun install
 ok "bun install complete"
+
+install_ripgrep
 
 # ── 3. Jasnah memory pack ──────────────────────────────────────
 

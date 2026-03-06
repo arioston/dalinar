@@ -41,6 +41,26 @@ echo ==^> Installing dependencies
 call bun install
 echo   [ok] bun install complete
 
+where rg >nul 2>&1
+if %errorlevel% neq 0 (
+    echo   [warn] ripgrep ^(rg^) not found
+    where winget >nul 2>&1
+    if !errorlevel! equ 0 (
+        echo   Attempting to install ripgrep via winget...
+        winget install --id BurntSushi.ripgrep.MSVC -e --accept-package-agreements --accept-source-agreements >nul 2>&1
+        where rg >nul 2>&1
+        if !errorlevel! equ 0 (
+            echo   [ok] ripgrep ^(rg^) installed
+        ) else (
+            echo   [warn] winget install failed; install manually: winget install --id BurntSushi.ripgrep.MSVC -e
+        )
+    ) else (
+        echo   [warn] winget not found; install ripgrep manually to enable fast search
+    )
+) else (
+    echo   [skip] ripgrep ^(rg^) already installed
+)
+
 REM ── 3. Jasnah memory pack ───────────────────────────────────────
 
 echo.
