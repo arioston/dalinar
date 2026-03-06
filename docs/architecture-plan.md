@@ -3,13 +3,13 @@
 > *"The most important step a man can take. It's not the first one, is it? It's the next one."*
 > — Dalinar Kholin, *Oathbringer*
 
-This document captures the full architectural vision, technical decisions, and implementation plan for the **Dalinar** project — the parent system that unifies **Jasnah** (memory and knowledge) and **Sazed** (project management and analysis) into a cohesive AI-augmented development workflow.
+This document captures the full architectural vision, technical decisions, and implementation plan for the **Dalinar** project — the parent system that unifies **Jasnah** (memory and knowledge), **Sazed** (project management and analysis), and **Hoid** (calendar and cross-system utilities) into a cohesive AI-augmented development workflow.
 
 Named after Dalinar Kholin, the Bondsmith whose Surgebinding power is Connection — the ability to bridge, bind, and unify.
 
 It is intended to be read by both humans and AI agents (Claude Code, OpenCode). Drop it into a project root or reference it from `CLAUDE.md` to give the agent full context.
 
-> **Status (March 2026):** All six implementation phases are structurally complete. See [protocol-reference.md](protocol-reference.md) and [pipelines-reference.md](pipelines-reference.md) for API details. Known gaps are tracked in [Section 14.1](#141-known-gaps).
+> **Status (March 2026):** All six implementation phases are structurally complete. The Effect.ts migration is done with 6 typed pipelines, 8 error types, and injectable services. Hoid calendar integration is live. See [protocol-reference.md](protocol-reference.md) and [pipelines-reference.md](pipelines-reference.md) for API details. Known gaps are tracked in [Section 14.1](#141-known-gaps).
 
 ---
 
@@ -38,12 +38,12 @@ It is intended to be read by both humans and AI agents (Claude Code, OpenCode). 
 
 ## 1. System Overview
 
-Dalinar is a Bun monorepo that orchestrates two AI-augmented development tools:
+Dalinar is a Bun monorepo that orchestrates three AI-augmented development tools:
 
 **Jasnah** — The archivist. Extracts, stores, and retrieves persistent knowledge from coding sessions. Named after Jasnah Kholin, the scholar from Brandon Sanderson's Stormlight Archive.
 
 - Memory extraction (decisions, insights, facts) from agent sessions
-- Semantic search via Qdrant (hybrid dense + BM25 with Reciprocal Rank Fusion)
+- Semantic search via Qdrant Cloud (hybrid dense + BM25 with Reciprocal Rank Fusion) or LanceDB (local zero-config fallback)
 - Ebbinghaus forgetting curve retention model with automatic garbage collection
 - Debug-trace skill grounded in David J. Agans' 9 Indispensable Rules of Debugging
 - Postgres query skill with multi-environment support
@@ -51,9 +51,9 @@ Dalinar is a Bun monorepo that orchestrates two AI-augmented development tools:
 - Works with both OpenCode and Claude Code agents
 - Global installation model: cloned once at `~/.local/share/jasnah`, symlinked into projects
 
-**Sazed** — The planner. Analyzes Jira epics alongside the codebase and produces structured task breakdowns with domain knowledge extraction. Named after the Terrisman Keeper from Brandon Sanderson's Mistborn series.
+**Sazed** — The planner. Analyzes Jira epics or document files alongside the codebase and produces structured task breakdowns with domain knowledge extraction. Named after the Terrisman Keeper from Brandon Sanderson's Mistborn series.
 
-- Fetches Jira epics (description, comments, linked issues)
+- Fetches Jira epics (description, comments, linked issues, attachments) or parses local documents (PDF, Word, Markdown, etc.) via `EpicResolverService`
 - Generates repo-map (compact symbol index) for codebase context
 - LLM-driven epic decomposition into implementation-ready tasks with estimates and acceptance criteria
 - Domain knowledge extraction into evergreen notes with Ebbinghaus retention
@@ -62,9 +62,17 @@ Dalinar is a Bun monorepo that orchestrates two AI-augmented development tools:
 - Two-step search: lightweight headers for triage, then full content on demand
 - Five note types: domain-fact, architecture, api-contract, glossary, lesson-learned
 
-**Superpowers** (this project) — The bond. The parent project that holds both as submodules, owns the shared protocol, and provides orchestration pipelines.
+**Hoid** — The connector. Unified calendar interface across Google Calendar and Microsoft Graph, supporting multiple accounts per provider. Named after Hoid, the world-hopping storyteller from Brandon Sanderson's Cosmere universe.
 
-The three together form a knowledge-work operating system: Sazed looks forward (what should we build?), Jasnah looks backward (what do we already know?), and Superpowers ensures they feed each other.
+- Lists events, finds free slots, creates and moves events, detects scheduling conflicts
+- Uses raw `fetch()` for API calls, Zod schemas for all types
+- Sweep-line algorithms for merge/availability/conflict operations
+- Multi-account support (personal + work calendars across providers)
+- Hosts cross-project skills (gsap-react, image-to-webp, sanity-tools)
+
+**Dalinar** (this project) — The bond. The parent project that holds all three as submodules, owns the shared protocol, and provides orchestration pipelines.
+
+The four together form a knowledge-work operating system: Sazed looks forward (what should we build?), Jasnah looks backward (what do we already know?), Hoid handles logistics (when are we available?), and Dalinar ensures they feed each other.
 
 ---
 
@@ -101,7 +109,7 @@ What we rejected: The gap between principles and measured outcomes. The repo tea
 
 **Hegelian Dialectic Skill** (KyleAMathews/hegelian-dialectic-skill) — Uses isolated AI "monks" (agents in separate contexts) to take fully committed opposing positions, then synthesizes via Hegel's determinate negation. Key insight: spawning agents in isolated contexts produces structurally decorrelated reasoning, not just different conclusions from shared premises.
 
-What we took: The idea that high-stakes decisions benefit from adversarial reasoning, and that isolation is critical for getting genuine opposition rather than hedged agreement. This informed the proposed `--dialectic` mode for Sazed.
+What we took: The idea that high-stakes decisions benefit from adversarial reasoning, and that isolation is critical for getting genuine opposition rather than hedged agreement. This informed the `dialectic` pipeline.
 
 What we rejected: The cost (10-15 minutes per round, 3+ rounds). For most task breakdowns, a single analysis pass is sufficient. Dialectic mode should be opt-in for architectural decisions only.
 
@@ -133,8 +141,8 @@ These principles guide all design decisions:
 - File naming: `{type}-{uuid}-{slug}.md`
 - Git auto-commit with configurable behavior (`amendIfUnpushed`, `commitPrefix`)
 - TODO gating to prevent premature extraction
-- Qdrant semantic search (optional): hybrid dense (all-MiniLM-L6-v2) + sparse (BM25), RRF fusion, project-scoped filtering, Ebbinghaus retention re-ranking
-- Secret filtering (3-layer) before Qdrant sync
+- Semantic search: Qdrant Cloud (hybrid dense + sparse BM25, RRF fusion) or LanceDB (local zero-config default), project-scoped filtering, Ebbinghaus retention re-ranking
+- Secret filtering (3-layer) before vector sync
 - Tombstoning (soft delete) for decayed memories
 
 **Skills:**
@@ -189,11 +197,14 @@ qdrant:
 
 **Core capabilities:**
 
-- Jira epic fetching (description, comments, linked issues) via REST API
+- Epic source resolution via `EpicResolverService`: accepts Jira keys (`EPIC-123`) or document files (`.md`, `.txt`, `.pdf`, `.docx`, `.pptx`, `.xlsx`)
+- Document parsing via `DocumentParserService` for non-code files (PDF, Word, Excel, PowerPoint, images)
+- Jira epic fetching (description, comments, linked issues, attachments) via REST API
 - Repo-map generation: compact symbol index fed to LLM as codebase context. Supports incremental updates and full regeneration.
-- LLM-driven epic decomposition: produces structured markdown with technical details, estimates, and acceptance criteria
+- LLM-driven epic decomposition: explores codebase via tool calls, then produces structured markdown with technical details, estimates, and acceptance criteria
 - Domain knowledge extraction (`--notes` flag): writes evergreen notes during analysis
 - Task lifecycle: `status` (staleness check), `diff` (snapshot comparison), `sync` (push to Jira as subtasks)
+- Git forensics: hotspot analysis, temporal coupling, ownership patterns
 - JSON-RPC server (Phase 3, in progress)
 
 **Note types:**
@@ -227,47 +238,100 @@ Base half-life: 30 days. Stability grows logarithmically with access count. Note
 **CLI commands:**
 
 ```bash
-sazed analyze EPIC-123              # Analyze epic, write to OUTPUT_DIR
-sazed analyze EPIC-123 --notes      # Analyze + extract domain knowledge
-sazed analyze EPIC-123 --no-map     # Analyze without repo-map (A/B testing)
-sazed analyze EPIC-123 --stdout     # Print to stdout
-sazed map                           # Generate/update repo map
-sazed map --force                   # Full regeneration
-sazed status EPIC-123               # Check refinement staleness
-sazed diff EPIC-123                 # Diff between last two snapshots
-sazed sync EPIC-123                 # Push tasks to Jira as subtasks
-sazed sync EPIC-123 --dry-run       # Preview sync
-sazed notes list                    # List notes with retention scores
-sazed notes search QUERY            # Search by keyword
-sazed notes show SLUG               # Show full note content
-sazed notes gc                      # Tombstone decayed notes (<1%)
+cd modules/sazed
+
+bun run packages/cli/src/main.ts analyze EPIC-123              # Analyze epic
+bun run packages/cli/src/main.ts analyze ./specs/design.pdf     # Analyze from document
+bun run packages/cli/src/main.ts analyze EPIC-123 --notes       # Analyze + extract domain knowledge
+bun run packages/cli/src/main.ts analyze EPIC-123 --no-map      # Analyze without repo-map (A/B testing)
+bun run packages/cli/src/main.ts analyze EPIC-123 --stdout      # Print to stdout
+bun run packages/cli/src/main.ts analyze EPIC-123 --forensics   # Auto-generate forensics report
+bun run packages/cli/src/main.ts map                            # Generate/update repo map
+bun run packages/cli/src/main.ts map --force                    # Full regeneration
+bun run packages/cli/src/main.ts forensics                      # Git forensics report
+bun run packages/cli/src/main.ts status EPIC-123                # Check refinement staleness
+bun run packages/cli/src/main.ts diff EPIC-123                  # Diff between last two snapshots
+bun run packages/cli/src/main.ts sync EPIC-123                  # Push tasks to Jira as subtasks
+bun run packages/cli/src/main.ts sync EPIC-123 --dry-run        # Preview sync
+bun run packages/cli/src/main.ts notes list                     # List notes with retention scores
+bun run packages/cli/src/main.ts notes search QUERY             # Search by keyword
+bun run packages/cli/src/main.ts notes show SLUG                # Show full note content
+bun run packages/cli/src/main.ts notes gc                       # Tombstone decayed notes (<1%)
 ```
 
 **Environment variables:**
 
 | Variable | Required | Description |
 |---|---|---|
-| `JIRA_BASE_URL` | Yes | Jira instance URL |
-| `JIRA_EMAIL` | Yes | Jira account email |
-| `JIRA_API_TOKEN` | Yes | Jira API token |
 | `ANTHROPIC_API_KEY` | Yes | Anthropic API key |
+| `JIRA_BASE_URL` | For Jira | Jira instance URL |
+| `JIRA_EMAIL` | For Jira | Jira account email |
+| `JIRA_API_TOKEN` | For Jira | Jira API token |
 | `SAZED_USER` | No | Display name for attribution |
 | `OUTPUT_DIR` | No | Refinement output (default: `.refinement`) |
 | `GIT_ROOT` | No | Override git root for repo-map |
 | `LLM_MODEL` | No | Claude model (default: `claude-sonnet-4-20250514`) |
 | `JIRA_PROJECT_KEY` | Sync | Required for sync command |
 | `JIRA_DRY_RUN` | No | Suppress all Jira writes |
+| `TOOL_CALL_BUDGET` | No | Exploration tool call limit (default: 25) |
+| `REFINEMENT_CONCURRENCY` | No | Parallel task refinement (default: 3) |
 
-### 3.3 Shared Skills (Currently in Jasnah or standalone)
+### 3.3 Hoid — What Exists Today
+
+**Repository:** `github.com/arioston/hoid`
+**Runtime:** Bun >= 1.0.0, TypeScript 5.x, Zod
+**Architecture:** Bun monorepo with `packages/{core, calendar, cli, skills}`
+
+**Core capabilities:**
+
+- Multi-provider calendar: Google Calendar + Microsoft Graph via unified interface
+- Multi-account: personal and work calendars across providers
+- OAuth2 authentication with refresh token management
+- Event listing, free slot discovery, event creation, event moving, conflict detection
+- Sweep-line algorithms for efficient merge/availability operations
+- Cross-project skills: gsap-react, image-to-webp, sanity-tools
+
+**Package structure:**
+
+- `@hoid/core` — Zod schemas, config loader, OAuth2 auth
+- `@hoid/calendar` — Provider adapters, merge algorithms, operations
+- `@hoid/cli` — CLI entry points for subprocess integration
+- `packages/skills/` — Standalone agent skills (not calendar-specific)
+
+**CLI commands:**
+
+```bash
+cd modules/hoid
+
+# Account management
+bun run packages/cli/src/calendar-auth.ts --add              # Add new account (interactive)
+bun run packages/cli/src/calendar-auth.ts --account work     # Login (OAuth flow)
+bun run packages/cli/src/calendar-auth.ts --status           # Check auth status
+
+# Calendar operations
+bun run packages/cli/src/calendar-list.ts --days 7 --json
+bun run packages/cli/src/calendar-free-slots.ts --days 5 --min-duration 30 --working-hours 9-17 --json
+bun run packages/cli/src/calendar-create.ts --title "Standup" --start "2026-03-15T09:00:00" --end "2026-03-15T09:30:00" --account work --json
+bun run packages/cli/src/calendar-move.ts --event-id ID --source work --new-start "2026-03-15T10:00:00" --new-end "2026-03-15T10:30:00"
+bun run packages/cli/src/calendar-conflicts.ts --days 7 --json
+```
+
+### 3.4 Shared Skills
 
 | Skill | Current Location | Scope |
 |---|---|---|
-| `using-git-worktrees` | Jasnah skills/ | Cross-project (used by jira skill) |
-| `jira` | Jasnah skills/ | Cross-project (orchestrates worktree + implementation) |
-| `jasnah-debug-trace` | Jasnah skills/ | Jasnah-specific (debugging methodology) |
-| `jasnah-query` | Jasnah skills/ | Jasnah-specific (database querying) |
-| `jasnah-search-memory` | Jasnah skills/ | Jasnah-specific (memory retrieval) |
-| `jasnah-export-memory` | Jasnah skills/ | Jasnah-specific (memory extraction) |
+| `using-git-worktrees` | `dalinar/skills/` | Cross-project (used by jira skill) |
+| `jira` | `dalinar/skills/` | Cross-project (orchestrates worktree + implementation) |
+| `calendar` | `dalinar/skills/` | Cross-project (unified Google + Microsoft calendar) |
+| `dialectic` | `dalinar/skills/` | Cross-project (adversarial reasoning for decisions) |
+| `reducing-entropy` | `dalinar/skills/` | Cross-project (codebase minimization methodology) |
+| `jasnah-debug-trace` | `modules/jasnah/skills/` → symlinked | Jasnah-specific (debugging methodology) |
+| `jasnah-query` | `modules/jasnah/skills/` → symlinked | Jasnah-specific (database querying) |
+| `jasnah-search-memory` | `modules/jasnah/skills/` → symlinked | Jasnah-specific (memory retrieval) |
+| `jasnah-export-memory` | `modules/jasnah/skills/` → symlinked | Jasnah-specific (memory extraction) |
+| `gsap-react` | `modules/hoid/packages/skills/` → symlinked | Hoid-hosted (GSAP + React animation patterns) |
+| `image-to-webp` | `modules/hoid/packages/skills/` → symlinked | Hoid-hosted (image conversion to WebP) |
+| `sanity-tools` | `modules/hoid/packages/skills/` → symlinked | Hoid-hosted (Sanity CMS operations) |
 
 ---
 
@@ -287,7 +351,7 @@ Jasnah and Sazed share significant architectural DNA (Ebbinghaus retention, secr
 
 ### 4.2 What We're Not Trying to Do
 
-We're NOT merging the two projects into one monolithic repo. Jasnah and Sazed have different concerns, different release cycles, and should remain independently usable. Jasnah must continue working as a standalone memory pack for projects that don't use Sazed. Sazed must continue working as a standalone CLI for teams that don't use Jasnah.
+We're NOT merging the projects into one monolithic repo. Jasnah, Sazed, and Hoid have different concerns, different release cycles, and should remain independently usable. Jasnah must continue working as a standalone memory pack for projects that don't use Sazed. Sazed must continue working as a standalone CLI for teams that don't use Jasnah. Hoid must continue working as a standalone calendar system.
 
 The superproject is a coordination layer, not a replacement.
 
@@ -300,13 +364,14 @@ The superproject is a coordination layer, not a replacement.
 ```
 dalinar/
 ├── packages/
-│   ├── protocol/              # Shared contract: types, retention, secrets, frontmatter
+│   ├── protocol/              # Shared contract: types, retention, secrets, frontmatter, vault
 │   │   ├── src/
-│   │   │   ├── types.ts       # NoteType, NoteHeader, NoteEntry, MemoryEntry
+│   │   │   ├── types.ts       # NoteType, NoteHeader, NoteEntry, RetentionMetadata
 │   │   │   ├── taxonomy.ts    # Unified 5-type taxonomy + legacy aliases
 │   │   │   ├── retention.ts   # Ebbinghaus: stability(), retention(), type multipliers
 │   │   │   ├── secrets.ts     # 3-layer secret detector
 │   │   │   ├── frontmatter.ts # YAML frontmatter parse/serialize
+│   │   │   ├── vault.ts       # Obsidian vault sync config (WORK_LOG_PATH)
 │   │   │   └── index.ts
 │   │   ├── package.json
 │   │   └── tsconfig.json
@@ -316,30 +381,56 @@ dalinar/
 │       │   ├── analyze-with-context.ts   # Sazed reads Jasnah → analyzes → writes back
 │       │   ├── implement-ticket.ts       # Full ticket lifecycle pipeline
 │       │   ├── audit.ts                  # Cross-session pattern detection
-│       │   └── index.ts
+│       │   ├── dialectic.ts              # Adversarial reasoning for decisions
+│       │   ├── reflect.ts               # Post-sprint retrospective capture
+│       │   ├── vault-sync.ts            # Sync .memory/ to Obsidian vault
+│       │   ├── jasnah.ts                # Jasnah integration (search, extract)
+│       │   ├── sazed.ts                 # Sazed integration (analysis runner)
+│       │   ├── hoid.ts                  # Hoid integration (calendar operations)
+│       │   ├── resolve-key.ts           # Jira key resolution (task → parent epic)
+│       │   ├── extract-notes.ts         # Pure extraction: analysis markdown → notes
+│       │   ├── skills.ts                # Skill discovery & dependency validation
+│       │   ├── index.ts
+│       │   └── effect/                  # Effect.ts typed pipeline layer
+│       │       ├── errors.ts            # 8 Schema.TaggedError types
+│       │       ├── services.ts          # JasnahService, SazedService, HoidService
+│       │       ├── subprocess.ts        # SubprocessService (wraps Bun.$)
+│       │       ├── runtime.ts           # OrchestratorLive layer + runCli helper
+│       │       ├── pipelines/           # 6 Effect.gen pipeline implementations
+│       │       ├── ticket/              # State machine (Data.tagged + Match.value)
+│       │       ├── wal/                 # Write-ahead log with atomic promotion
+│       │       └── context/             # Mise snapshots with SHA-256 hash caching
 │       ├── package.json
 │       └── tsconfig.json
 │
 ├── modules/
 │   ├── jasnah/                # git submodule → github.com/arioston/jasnah
-│   └── sazed/                 # git submodule → github.com/arioston/sazed
+│   ├── sazed/                 # git submodule → github.com/arioston/sazed
+│   └── hoid/                  # git submodule → github.com/arioston/hoid
 │
-├── skills/                    # Skills that span both systems or are general-purpose
-│   ├── using-git-worktrees/
-│   │   └── SKILL.md
-│   ├── jira/
-│   │   ├── SKILL.md
-│   │   └── jira-request.ts
-│   └── dialectic/             # Adversarial reasoning for decisions
-│       └── SKILL.md
+├── skills/                    # Skills that span systems or are general-purpose
+│   ├── using-git-worktrees/   # Workspace isolation for feature work
+│   ├── jira/                  # Full ticket lifecycle (fetch → implement → PR)
+│   ├── calendar/              # Unified calendar operations (Hoid-powered)
+│   ├── dialectic/             # Adversarial reasoning for decisions
+│   ├── reducing-entropy/      # Codebase minimization methodology
+│   ├── jasnah-debug-trace → ../modules/jasnah/skills/jasnah-debug-trace
+│   ├── jasnah-query → ../modules/jasnah/skills/jasnah-query
+│   ├── jasnah-search-memory → ../modules/jasnah/skills/jasnah-search-memory
+│   ├── jasnah-export-memory → ../modules/jasnah/skills/jasnah-export-memory
+│   ├── gsap-react → ../modules/hoid/packages/skills/gsap-react
+│   ├── image-to-webp → ../modules/hoid/packages/skills/image-to-webp
+│   └── sanity-tools → ../modules/hoid/packages/skills/sanity-tools
 │
 ├── docs/
 │   ├── architecture-plan.md   # This document
 │   ├── protocol-reference.md  # Protocol package API reference
 │   └── pipelines-reference.md # Orchestrator pipelines guide
 │
+├── setup.sh                   # Full setup script (Linux/macOS)
+├── setup.bat                  # Full setup script (Windows)
 ├── package.json               # Bun workspace root
-├── tsconfig.json              # Project references across everything
+├── tsconfig.json              # Project references
 ├── CLAUDE.md                  # Unified agent instructions
 └── README.md
 ```
@@ -354,12 +445,13 @@ dalinar/
   "workspaces": [
     "packages/*",
     "modules/jasnah",
-    "modules/sazed/packages/*"
+    "modules/sazed/packages/*",
+    "modules/hoid/packages/*"
   ]
 }
 ```
 
-Sazed is itself a monorepo with `packages/{core,adapters,cli,server}`, so the workspace declaration reaches into the submodule's internal packages. Bun resolves dependencies across the entire tree, allowing Sazed's `core` package to import from `@dalinar/protocol`.
+Sazed is itself a monorepo with `packages/{core,adapters,cli,server}`, so the workspace declaration reaches into the submodule's internal packages. Hoid similarly has `packages/{core,calendar,cli,skills}`. Bun resolves dependencies across the entire tree, allowing both submodules' packages to import from `@dalinar/protocol`.
 
 ### 5.3 Submodule Setup
 
@@ -372,10 +464,20 @@ bun init
 # Add submodules
 git submodule add https://github.com/arioston/jasnah.git modules/jasnah
 git submodule add https://github.com/arioston/sazed.git modules/sazed
+git submodule add https://github.com/arioston/hoid.git modules/hoid
 
 # Install all dependencies across the workspace
 bun install
 ```
+
+Or use the setup script which handles all of this automatically:
+
+```bash
+./setup.sh          # Linux / macOS
+setup.bat           # Windows
+```
+
+The setup script is idempotent and handles: submodule init, `bun install`, Jasnah memory pack, skill symlinks (project and global), `.env` from template, and Hoid calendar config.
 
 ### 5.4 TypeScript Project References
 
@@ -385,6 +487,12 @@ bun install
   "compilerOptions": {
     "composite": true,
     "declaration": true,
+    "target": "ESNext",
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "esModuleInterop": true,
+    "strict": true,
+    "skipLibCheck": true,
     "paths": {
       "@dalinar/protocol": ["./packages/protocol/src"],
       "@dalinar/orchestrator": ["./packages/orchestrator/src"]
@@ -392,20 +500,20 @@ bun install
   },
   "references": [
     { "path": "./packages/protocol" },
-    { "path": "./packages/orchestrator" },
-    { "path": "./modules/jasnah" },
-    { "path": "./modules/sazed/packages/core" },
-    { "path": "./modules/sazed/packages/adapters" },
-    { "path": "./modules/sazed/packages/cli" }
+    { "path": "./packages/orchestrator" }
   ]
 }
 ```
+
+Module subprojects (Jasnah, Sazed, Hoid) manage their own TypeScript compilation independently. The root tsconfig only references the Dalinar-owned packages.
 
 ---
 
 ## 6. The Protocol Package
 
-`@dalinar/protocol` is the shared contract between Jasnah and Sazed. It owns types, retention math, secret filtering, and frontmatter handling. Neither submodule imports the other — both import from protocol.
+`@dalinar/protocol` is the shared contract between Jasnah and Sazed. It owns types, retention math, secret filtering, frontmatter handling, and vault configuration. Neither submodule imports the other — both import from protocol.
+
+For detailed API reference, see [protocol-reference.md](protocol-reference.md).
 
 ### 6.1 Types
 
@@ -495,8 +603,6 @@ export function resolveNoteType(input: string): NoteType {
 ```typescript
 // packages/protocol/src/frontmatter.ts
 
-import { NoteEntry, NoteType } from "./types";
-
 export interface NoteFrontmatter {
   id: string;
   title: string;
@@ -512,30 +618,31 @@ export interface NoteFrontmatter {
   retentionScore: number;
   tombstonedAt?: string;
 }
-
-// Example serialized frontmatter:
-//
-// ---
-// id: a7f3b2c1-4d5e-6f7a-8b9c-0d1e2f3a4b5c
-// title: Use Postgres for analytics pipeline
-// type: architecture
-// summary: Chose Postgres over ClickHouse for analytics due to team familiarity
-// tags: [database, analytics, architecture]
-// confidence: high
-// source: sazed:EPIC-456
-// createdAt: 2026-02-15T10:30:00Z
-// lastAccessedAt: 2026-02-28T14:00:00Z
-// accessCount: 3
-// stability: 2.10
-// retentionScore: 0.85
-// ---
 ```
+
+### 6.4 Vault Configuration
+
+```typescript
+// packages/protocol/src/vault.ts
+
+export interface VaultConfig {
+  workLogPath: string;
+  projectName: string;
+  excludes: string[];
+}
+
+// Opt-in via WORK_LOG_PATH env var
+// Resolves vault paths for Obsidian Work Log sync
+// Coexists with HoldGate folders in the same vault
+```
+
+See [protocol-reference.md](protocol-reference.md) for full vault API.
 
 ---
 
 ## 7. The Orchestrator Package
 
-`@dalinar/orchestrator` provides six pipelines that compose Jasnah and Sazed workflows. These are the high-level operations that require both systems. See [pipelines-reference.md](pipelines-reference.md) for full API details.
+`@dalinar/orchestrator` provides seven pipelines that compose Jasnah, Sazed, and Hoid workflows. These are the high-level operations that require multiple systems. See [pipelines-reference.md](pipelines-reference.md) for full API details.
 
 ### 7.1 Analyze With Context
 
@@ -545,16 +652,19 @@ The most important pipeline. When Sazed analyzes an epic, it first queries Jasna
 ┌─────────────────────────────────────────────────────────────────┐
 │                    analyze-with-context                          │
 │                                                                 │
-│  1. Search Jasnah memories (architecture, domain-fact,          │
-│     api-contract) related to the epic's affected areas          │
+│  1. Resolve key (task → parent epic if needed via Jira API)     │
 │                                                                 │
-│  2. Run Sazed's refineEpic with prior context injected          │
+│  2. Search Jasnah memories (architecture, domain-fact,          │
+│     api-contract, lesson-learned) related to the epic           │
+│                                                                 │
+│  3. Run Sazed's refineEpic with prior context injected          │
 │     into the LLM prompt alongside repo-map + Jira data          │
 │                                                                 │
-│  3. Extract new domain knowledge from analysis results           │
+│  4. Extract new domain knowledge from analysis results          │
 │                                                                 │
-│  4. Write extracted notes back to Jasnah's .memory/ store       │
-│     via extract-inline.ts                                        │
+│  5. Write extracted notes back to Jasnah's .memory/ store       │
+│                                                                 │
+│  6. Sync .memory/ to Obsidian vault (if WORK_LOG_PATH set)     │
 │                                                                 │
 │  Result: Analysis is informed by history; new knowledge          │
 │  is captured for future analyses.                                │
@@ -650,6 +760,54 @@ Captures corrections and learnings after a sprint when actuals are known, feedin
 
 Usage: `echo '<json>' | bun run packages/orchestrator/src/reflect.ts --sprint sprint-42`
 
+### 7.6 Vault Sync
+
+Opt-in sync of `.memory/` to an Obsidian vault's Work Log folder. Runs automatically as part of `analyze-with-context`, or can be invoked standalone.
+
+```
+┌──────────────────────────────────────────────────────────────┐
+│                       vault-sync                              │
+│                                                              │
+│  1. Check WORK_LOG_PATH (skip silently if not set)           │
+│  2. Infer project name from git repo root                    │
+│  3. rsync .memory/ → $WORK_LOG_PATH/<project>/               │
+│     (excludes: config.yaml, locks/, raw/, index.json)        │
+│  4. Obsidian Sync picks up changes automatically             │
+└──────────────────────────────────────────────────────────────┘
+```
+
+Usage: `bun run packages/orchestrator/src/vault-sync.ts [project-root]`
+
+### 7.7 Effect.ts Layer
+
+All seven orchestrator pipelines have Effect.ts counterparts with typed errors, injectable services, and test layers. The CLI entrypoints try the Effect pipeline first with a fallback to the original async function.
+
+**Services** (`Context.Tag` with subprocess transport):
+
+| Service | Purpose |
+|---|---|
+| `JasnahService` | Memory search, extraction, context formatting |
+| `SazedService` | Epic analysis runner |
+| `HoidService` | Calendar operations (list, free-slots, create, move, conflicts) |
+| `SubprocessService` | Wraps `Bun.$` — all services depend on it |
+
+**Error types** (`Schema.TaggedError`):
+
+`SubprocessError`, `JasnahError`, `SazedError`, `HoidError`, `VaultSyncError`, `FileOperationError`, `TicketStateError`, `ParseError`
+
+**Runtime:**
+
+- `OrchestratorLive` = `Layer.mergeAll(JasnahServiceLive, SazedServiceLive, HoidServiceLive)` provided with `SubprocessServiceLive`
+- `runCli()` helper maps errors to exit codes
+
+**Advanced subsystems** (built, pending consumer integration):
+
+- **TicketStore** — File-based state machine in `.orders/tickets/` with states: `Unclaimed → Claimed → InProgress → Done | Blocked`. Uses `Data.tagged` unions + `Match.value` for exhaustive transitions.
+- **WALService** — Crash-safe order logging via `orders-next.json → orders.json` atomic promotion using `Effect.acquireRelease`.
+- **SnapshotService** — Mise-style context snapshots with `Schema.Class` types, SHA-256 content hashing, and `Ref`-based caching.
+
+Tests: `bun test packages/orchestrator/src/effect/` (1,400+ lines across 4 test files)
+
 ---
 
 ## 8. Unified Note Taxonomy
@@ -717,7 +875,7 @@ Where:
 - `s` = stability (grows logarithmically with access count)
 - `HALF_LIFE` = base half-life in days (default: 30)
 
-### 9.2 Type-Specific Half-Life Multipliers (NEW)
+### 9.2 Type-Specific Half-Life Multipliers
 
 Different note types have different natural lifespans. A glossary term is near-permanent; a lesson-learned from last sprint is time-sensitive.
 
@@ -738,16 +896,23 @@ export function effectiveHalfLife(type: NoteType): number {
   return BASE_HALF_LIFE_DAYS * (halfLifeMultipliers[type] ?? 1.0);
 }
 
-export function stability(accessCount: number): number {
+export function computeStability(accessCount: number): number {
   return 1.0 + Math.log(1 + accessCount);
 }
 
-export function retention(
+export function computeRetention(
+  daysSinceAccess: number,
+  stability: number,
+): number {
+  return Math.exp(-daysSinceAccess / (BASE_HALF_LIFE_DAYS * stability / Math.LN2));
+}
+
+export function computeTypedRetention(
   daysSinceAccess: number,
   accessCount: number,
   type: NoteType
 ): number {
-  const s = stability(accessCount);
+  const s = computeStability(accessCount);
   const halfLife = effectiveHalfLife(type);
   return Math.exp(-daysSinceAccess / (halfLife * s / Math.LN2));
 }
@@ -780,13 +945,13 @@ For a note with 0 accesses (stability = 1.0):
 
 Both Jasnah and Sazed use identical secret detection before persisting any note. The protocol package provides the canonical implementation.
 
-**Layer 1 — Known prefix patterns.** Matches 24+ well-known token formats:
+**Layer 1 — Known prefix patterns.** Matches 20+ well-known token formats:
 - GitHub PATs: `ghp_`, `gho_`, `ghu_`, `ghs_`, `github_pat_`
 - AWS access keys: `AKIA...`
 - Anthropic/OpenAI: `sk-ant-...`, `sk-...`
 - Slack: `xox[bpaosr]-...`
 - JWTs: `eyJ...eyJ...`
-- Stripe, SendGrid, Twilio, Mailgun, npm, PyPI, GitLab, Cloudflare, and others
+- Stripe, SendGrid, Twilio, Mailgun, npm, PyPI, GitLab, Cloudflare, Discord, Telegram, and others
 
 **Layer 2 — High-entropy strings.** Flags hex strings of 32+ characters or base64 strings of 17+ characters whose Shannon entropy exceeds 3.0 bits/character. A code-identifier heuristic suppresses false positives from variable names, file paths, and camelCase identifiers.
 
@@ -809,6 +974,7 @@ When `sazed analyze --notes` runs, extracted domain knowledge should be written 
 
 ```bash
 # Sazed analysis extracts notes, pipes to Jasnah
+JASNAH="${JASNAH_ROOT:-$HOME/.local/share/jasnah}"
 echo "$EXTRACTED_NOTES_JSON" | bun run "$JASNAH/scripts/extract-inline.ts" \
   --root "$PROJECT_ROOT" \
   --source "sazed:EPIC-123"
@@ -818,33 +984,38 @@ echo "$EXTRACTED_NOTES_JSON" | bun run "$JASNAH/scripts/extract-inline.ts" \
 
 When Sazed starts an epic analysis, it should first search Jasnah memories for relevant prior context. This context gets injected into the LLM prompt alongside the repo-map and Jira data.
 
-**Current state:** No cross-system context.
-**Target state:** The orchestrator's `analyze-with-context` pipeline searches Jasnah before calling Sazed's analysis.
+**Current state:** Implemented via the `analyze-with-context` pipeline.
+**How:** The orchestrator's `analyze-with-context` pipeline searches Jasnah before calling Sazed's analysis, injecting relevant memories as prompt context.
 
-### 11.3 Post-Sprint Reflection (NEW)
+### 11.3 Post-Sprint Reflection
 
 After a sprint, when actuals are known (what tasks took longer, what was missed, what blockers appeared), feed corrections back as `lesson-learned` entries:
 
 ```bash
 # Manual reflection after sprint
-echo '[
-  {
-    "type": "lesson-learned",
-    "summary": "DB migration estimates consistently 2x actual",
-    "content": "Across EPIC-101, EPIC-115, and EPIC-128, database migration tasks took roughly double the original estimate. Primary cause: schema changes trigger cascade updates in dependent services that are not captured in the initial analysis.",
-    "tags": ["estimation", "database", "migration"],
-    "confidence": "high"
-  }
-]' | bun run "$JASNAH/scripts/extract-inline.ts" --root "$PWD" --source "sprint-retro:sprint-42"
+echo '{
+  "estimateAccuracy": [
+    { "taskDescription": "DB migration", "estimatedEffort": "2d", "actualEffort": "5d",
+      "reason": "Cascade updates in dependent services" }
+  ],
+  "blockers": [
+    { "description": "Auth service rate limiting", "impact": "Delayed testing by 1 day",
+      "wasAnticipated": false }
+  ]
+}' | bun run packages/orchestrator/src/reflect.ts --sprint sprint-42
 ```
 
-### 11.4 Cross-Session Pattern Detection (NEW)
+### 11.4 Cross-Session Pattern Detection
 
 The `audit` pipeline periodically (or on-demand) scans the memory store for:
 - Recurring tags/topics that co-occur with `lesson-learned` entries (systematic problem areas)
 - Decision entries that have been superseded or reversed (oscillation)
 - Estimation patterns across multiple Sazed analyses vs. actuals
 - Knowledge gaps (codebase areas with no architecture or api-contract notes)
+
+### 11.5 Obsidian Vault Sync
+
+The `vault-sync` pipeline optionally mirrors `.memory/` to an Obsidian vault's Work Log folder, making extracted knowledge browseable alongside HoldGate notes. Activated by setting `WORK_LOG_PATH`.
 
 ---
 
@@ -854,17 +1025,22 @@ The `audit` pipeline periodically (or on-demand) scans the memory store for:
 
 | Skill | Location | Rationale |
 |---|---|---|
-| `jasnah-debug-trace` | `modules/jasnah/skills/` | Tightly coupled to Jasnah's trace utilities |
-| `jasnah-query` | `modules/jasnah/skills/` | Tightly coupled to Jasnah's psql scripts |
-| `jasnah-search-memory` | `modules/jasnah/skills/` | Operates on Jasnah's memory store |
-| `jasnah-export-memory` | `modules/jasnah/skills/` | Drives Jasnah's extraction pipeline |
-| `using-git-worktrees` | `dalinar/skills/` | General-purpose, used by multiple skills |
+| `using-git-worktrees` | `dalinar/skills/` | General-purpose workspace isolation |
 | `jira` | `dalinar/skills/` | Orchestrates across worktree + implementation |
-| `dialectic` | `dalinar/skills/` | Orchestrates isolated LLM agents for decisions |
+| `calendar` | `dalinar/skills/` | Unified calendar operations via Hoid |
+| `dialectic` | `dalinar/skills/` | Adversarial reasoning for architectural decisions |
+| `reducing-entropy` | `dalinar/skills/` | Codebase minimization methodology |
+| `jasnah-debug-trace` | `modules/jasnah/skills/` → symlinked | Tightly coupled to Jasnah's trace utilities |
+| `jasnah-query` | `modules/jasnah/skills/` → symlinked | Tightly coupled to Jasnah's psql scripts |
+| `jasnah-search-memory` | `modules/jasnah/skills/` → symlinked | Operates on Jasnah's memory store |
+| `jasnah-export-memory` | `modules/jasnah/skills/` → symlinked | Drives Jasnah's extraction pipeline |
+| `gsap-react` | `modules/hoid/packages/skills/` → symlinked | GSAP + React animation patterns |
+| `image-to-webp` | `modules/hoid/packages/skills/` → symlinked | Image conversion to WebP via cwebp |
+| `sanity-tools` | `modules/hoid/packages/skills/` → symlinked | Sanity CMS operations |
 
 ### 12.2 Skill Composition Protocol
 
-Skills can invoke other skills. The current pattern (jira skill calls worktree skill) should be formalized:
+Skills can invoke other skills. The current pattern (jira skill calls worktree skill) is formalized via SKILL.md frontmatter:
 
 ```
 # In a skill's SKILL.md, declare dependencies:
@@ -873,6 +1049,8 @@ name: jira
 depends-on: [using-git-worktrees, jasnah-search-memory]
 ---
 ```
+
+The `discoverSkills()` and `validateDependencies()` functions in `packages/orchestrator/src/skills.ts` parse and check these dependencies.
 
 The full pipeline for ticket implementation:
 
@@ -911,14 +1089,12 @@ Correlation IDs link frontend and backend traces for a single user action. Gener
 
 ### 13.1 How Sazed Calls Jasnah (via CLI)
 
-The recommended integration pattern for the initial phase. Sazed shells out to Jasnah's CLI scripts, which are stable and well-tested entry points.
+The recommended integration pattern. Sazed shells out to Jasnah's CLI scripts, which are stable and well-tested entry points.
 
 **Reading (search):**
 
 ```typescript
-import { resolveJasnahRoot } from "@dalinar/protocol";
-
-const jasnah = resolveJasnahRoot(); // JASNAH_ROOT → XDG → ~/.local/share/jasnah
+const jasnah = process.env.JASNAH_ROOT ?? `${process.env.HOME}/.local/share/jasnah`;
 const result = Bun.spawnSync(
   ["bun", "run", `${jasnah}/scripts/search-memory.ts`, query, "--type", "architecture", "--limit", "5"],
   { cwd: projectRoot }
@@ -938,70 +1114,44 @@ const proc = Bun.spawn(
 
 Latency: ~200ms per subprocess call. Negligible for epic analysis (one search + one extract per run).
 
-### 13.2 How Sazed Calls Jasnah (via Workspace Import — Future)
+### 13.2 How the Orchestrator Calls Hoid (via CLI)
 
-When both are in the superproject workspace, direct imports become possible:
+Calendar operations follow the same subprocess pattern:
 
 ```typescript
-// Inside Sazed's refineEpic workflow
-import { searchMemories, extractMemories } from "@dalinar/orchestrator";
-
-const priorDecisions = await searchMemory({
-  query: "payments service architecture",
-  type: "architecture",
-  limit: 10,
-});
-
-await extractInline(notes, { root: projectRoot, source: `sazed:${epicKey}` });
+// packages/orchestrator/src/hoid.ts
+const hoidRoot = resolve(dalinarRoot, "modules/hoid");
+const result = Bun.spawnSync(
+  ["bun", "run", `${hoidRoot}/packages/cli/src/calendar-list.ts`, "--days", "7", "--json"],
+);
 ```
 
-This requires Jasnah to expose a programmatic API (not just CLI scripts). The current architecture is script-based, so this is a Phase 3+ target.
+The `HoidService` in the Effect layer wraps these calls with typed errors (`HoidError`) and injectable test layers.
 
 ### 13.3 Standalone Compatibility
 
-Jasnah MUST continue working without the superproject. The protocol package provides types and utilities that Jasnah can optionally depend on:
+Each submodule MUST continue working without the superproject. The protocol package provides types and utilities that submodules can optionally depend on:
 
 - **When running inside superproject workspace:** Imports live from `@dalinar/protocol`
 - **When running standalone (globally installed):** Uses bundled copies of the types and functions
 
-This is conceptually similar to how Sazed's Effect adapters work: the core defines interfaces, adapters provide implementations, and what's available depends on the runtime context.
-
-### 13.4 Agent Instructions (CLAUDE.md)
-
-The superproject's CLAUDE.md provides unified agent instructions:
-
-```markdown
-# Superpowers
-
-This project orchestrates Jasnah (memory) and Sazed (planning) for AI-augmented development.
-
-## Before Starting Work
-
-1. Search memories for prior context on the area you're working in:
-   JASNAH="${JASNAH_ROOT:-$HOME/.local/share/jasnah}"
-   bun run "$JASNAH/scripts/search-memory.ts" "<relevant query>"
-
-2. If working on an epic, run analysis with context:
-   bun run packages/orchestrator/src/analyze-with-context.ts EPIC-XXX
-
-## After Completing Work
-
-1. Extract session memories:
-   bun run "$JASNAH/scripts/extract-inline.ts" --root "$PWD" --source "session-description"
-
-## Skills Available
-
-- jasnah-debug-trace: Structured debugging (use for runtime bugs)
-- jasnah-query: Database querying (use for data investigation)
-- using-git-worktrees: Workspace isolation (use before feature work)
-- jira: Full ticket lifecycle (fetch → implement → PR → comment)
+```typescript
+// Top-level await dynamic import with fallback
+let _protocol: typeof import("@dalinar/protocol") | null = null
+try {
+  _protocol = await import("@dalinar/protocol")
+} catch {
+  // Not in Dalinar workspace — use local implementations
+}
 ```
+
+This ensures both submodules work identically whether standalone or inside the Dalinar workspace.
 
 ---
 
 ## 14. Implementation History
 
-> **All six phases completed March 2026.**
+> **All six phases completed March 2026. Effect.ts migration and Hoid integration also complete.**
 
 ### Phase 1: Scaffold — COMPLETED
 
@@ -1013,8 +1163,8 @@ This project orchestrates Jasnah (memory) and Sazed (planning) for AI-augmented 
 
 ### Phase 2: Extract Protocol Package — COMPLETED
 
-- Created `packages/protocol/` with types, taxonomy, retention, secrets, frontmatter
-- 61 tests covering all protocol functions
+- Created `packages/protocol/` with types, taxonomy, retention, secrets, frontmatter, vault
+- 61+ tests covering all protocol functions (including vault configuration)
 - Retention math validated against architecture plan table values
 - Type-specific half-life multipliers and legacy alias support (`decision` → `architecture`, etc.)
 
@@ -1033,8 +1183,9 @@ This project orchestrates Jasnah (memory) and Sazed (planning) for AI-augmented 
 
 ### Phase 5: Build Orchestrator — COMPLETED
 
-- `analyze-with-context`: search Jasnah → Sazed analysis → extract knowledge back
+- `analyze-with-context`: search Jasnah → Sazed analysis → extract knowledge back → vault sync
 - `implement-ticket`: full lifecycle pipeline (context → analysis → worktree → implementation plan)
+- `vault-sync`: opt-in Obsidian vault sync via `WORK_LOG_PATH`
 - Jasnah integration module (search, extract, format context for prompts)
 - Sazed integration module (subprocess wrapper around CLI)
 
@@ -1045,8 +1196,38 @@ This project orchestrates Jasnah (memory) and Sazed (planning) for AI-augmented 
 - `reflect`: post-sprint retrospective capture (estimate drift, blockers, wins, decision revisions → memories)
 - Dialectic skill definition at `skills/dialectic/SKILL.md`
 
+### Phase 7: Effect.ts Migration — COMPLETED
+
+- All 7 pipelines migrated to `Effect.gen` chains with typed errors
+- 3 injectable services: `JasnahService`, `SazedService`, `HoidService` (all via `SubprocessService`)
+- 8 `Schema.TaggedError` types for structured error handling
+- `OrchestratorLive` layer composition + `runCli()` error-to-exit-code helper
+- Ticket state machine: `Data.tagged` unions + `Match.value` exhaustive transitions
+- WAL: crash-safe `orders-next.json → orders.json` promotion via `Effect.acquireRelease`
+- Context snapshots: `Schema.Class` types + SHA-256 content hashing + `Ref`-based caching
+- 1,400+ lines of tests across 6 test files
+- CLI fallback: try Effect pipeline, catch fallback to original async function
+
+### Phase 8: Hoid Integration — COMPLETED
+
+- Added Hoid as third git submodule (`modules/hoid/`)
+- `HoidService` + `HoidError` in Effect layer
+- `hoid.ts` integration module for calendar subprocess calls
+- `calendar` skill in `skills/` with full SKILL.md
+- `setup.sh`/`setup.bat` updated to handle Hoid submodule, skill symlinks, and calendar config
+- Hoid-hosted skills (gsap-react, image-to-webp, sanity-tools) symlinked into `skills/`
+- Workspace config updated: `modules/hoid/packages/*`
+
+### Phase 9: Extraction Enhancement (Phase A) — COMPLETED
+
+- Task key resolution: detect task key → resolve to parent epic via Jira API
+- Enriched Jasnah search with task key for narrower context
+- Richer knowledge extraction from analysis output (5 extraction rules, 8-note budget)
+- `resolve-key.ts` and `extract-notes.ts` shared modules
+
 ### Future Work
 
+- Deep analysis pipeline (Phase B): full epic→task hierarchy analysis with per-task retrospectives
 - Cross-project knowledge sharing (global insights tier with separate Qdrant collection)
 - RPC server as unified integration point (building on Sazed's Phase 3 JSON-RPC server)
 - Extraction quality improvements (human-in-the-loop, confidence-weighted auto-commit)
@@ -1062,6 +1243,9 @@ Areas where the implementation is structurally in place but not yet fully enforc
 | Dialectic automation | Manual invocation | Pipeline exists but is not auto-triggered by commit patterns or CI |
 | Audit coverage | Core patterns | Detects decision oscillation and recurring blockers; does not yet cover knowledge staleness or cross-project duplication |
 | Memory extraction in skills | Documented in jira skill | Other skills (worktrees, dialectic) do not yet include extraction steps |
+| Effect CLI fallback | Partial | Only `analyze-with-context` has explicit Effect→async fallback; others have Effect counterparts but use async in CLI |
+| TicketStore/WAL/Snapshot | Built, no consumer | State machine, WAL, and snapshots exist but are not yet wired into a live pipeline |
+| Deep analysis (Phase B) | Planned | Full epic→task hierarchy with per-task retrospectives — designed but not implemented |
 
 ---
 
@@ -1149,6 +1333,23 @@ Sazed's repo-map is a compact symbol index fed to the LLM. If stale, it will ref
 
 **Key quote from review:** "This is one of the more intellectually serious agent skills I've seen. It's the debugging skill philosophy applied to reasoning itself."
 
+### 16.4 Noodle (poteto/noodle)
+
+**What it is:** Autonomous multi-agent orchestrator in Go. Runs multiple LLM agents in parallel on isolated git worktrees, coordinates via files, merges results. "Kitchen brigade" metaphor: scheduler → cooks → merge.
+
+**What we adopted:**
+- Everything-is-a-file coordination (JSON/NDJSON on disk, no DB/MQ/RPC)
+- Write-ahead promotion pattern (orders-next.json → orders.json)
+- Mise context snapshots (single JSON with everything the scheduler needs)
+- Ticket protocol for work claiming (claim → progress → done → blocked → release)
+- Mechanical stage advancement (execute → quality → reflect, no LLM judgment between stages)
+
+**What we explicitly rejected:**
+- Go language (stay with Effect-TS)
+- Multi-agent parallelism (Sazed is single-analysis pipeline)
+- Web UI (Sazed → Bonsai TUI)
+- Process-level isolation (Sazed uses API directly for fine-grained control)
+
 ---
 
 ## 17. Naming Convention
@@ -1160,6 +1361,7 @@ All projects in this ecosystem use names from Brandon Sanderson's Cosmere univer
 | **Dalinar** | Dalinar Kholin, the Bondsmith | Stormlight Archive | The unifier — Connection binds separate systems together |
 | **Jasnah** | Jasnah Kholin, the scholar | Stormlight Archive | The archivist who accumulates knowledge |
 | **Sazed** | Sazed of Terris, the Keeper | Mistborn | The planner who stores and retrieves coppermind memories |
+| **Hoid** | Hoid, the world-hopper | Cosmere (all series) | The connector — bridges worlds, carries information everywhere |
 
 Package namespace: `@dalinar/*`. Repository: `github.com/arioston/dalinar`.
 
@@ -1186,5 +1388,6 @@ How each of Agans' 9 Indispensable Rules maps to the Dalinar ecosystem:
 ---
 
 *Document generated from architecture review session, March 2, 2026.*
-*All six phases implemented March 2, 2026.*
-*Source conversations: debugging skill brainstorm, brainmaxxing review, context engineering review, hegelian dialectic review, Jasnah project knowledge, Sazed README.*
+*All six phases implemented March 2, 2026. Effect.ts migration, Hoid integration, and extraction enhancement completed March 2026.*
+*Updated March 6, 2026: Synced with actual codebase state — added Hoid, Effect.ts layer, vault-sync, extraction enhancement, updated skill inventory and implementation history.*
+*Source conversations: debugging skill brainstorm, brainmaxxing review, context engineering review, hegelian dialectic review, Jasnah project knowledge, Sazed README, noodle analysis.*
