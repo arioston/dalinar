@@ -6,7 +6,7 @@ Dalinar orchestrates Jasnah (memory) and Sazed (planning) for AI-augmented devel
 
 1. Search memories for prior context on the area you're working in:
    ```bash
-   JASNAH="${JASNAH_ROOT:-$HOME/.local/share/jasnah}"
+   JASNAH="${JASNAH_ROOT:-${XDG_DATA_HOME:-$HOME/.local/share}/jasnah}"
    bun run "$JASNAH/scripts/search-memory.ts" "<relevant query>"
    ```
 
@@ -19,7 +19,7 @@ Dalinar orchestrates Jasnah (memory) and Sazed (planning) for AI-augmented devel
 
 1. Extract session memories:
    ```bash
-   JASNAH="${JASNAH_ROOT:-$HOME/.local/share/jasnah}"
+   JASNAH="${JASNAH_ROOT:-${XDG_DATA_HOME:-$HOME/.local/share}/jasnah}"
    bun run "$JASNAH/scripts/extract-inline.ts" --root "$PWD" --source "session-description"
    ```
 

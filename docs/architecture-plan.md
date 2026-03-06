@@ -974,7 +974,7 @@ When `sazed analyze --notes` runs, extracted domain knowledge should be written 
 
 ```bash
 # Sazed analysis extracts notes, pipes to Jasnah
-JASNAH="${JASNAH_ROOT:-$HOME/.local/share/jasnah}"
+JASNAH="${JASNAH_ROOT:-${XDG_DATA_HOME:-$HOME/.local/share}/jasnah}"
 echo "$EXTRACTED_NOTES_JSON" | bun run "$JASNAH/scripts/extract-inline.ts" \
   --root "$PROJECT_ROOT" \
   --source "sazed:EPIC-123"

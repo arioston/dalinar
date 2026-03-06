@@ -102,7 +102,7 @@ If the requirements are clear, proceed directly.
 Search Jasnah for any prior knowledge related to the ticket's domain:
 
 ```bash
-JASNAH="${JASNAH_ROOT:-$HOME/.local/share/jasnah}"
+JASNAH="${JASNAH_ROOT:-${XDG_DATA_HOME:-$HOME/.local/share}/jasnah}"
 bun run "$JASNAH/scripts/search-memory.ts" "<ticket summary and key terms>"
 ```
 
@@ -142,7 +142,7 @@ bun "$DALINAR_ROOT/skills/jira/jira-request.ts" POST '/rest/api/2/issue/PROJ-XXX
 After the ticket is complete, extract any new knowledge gained during implementation:
 
 ```bash
-JASNAH="${JASNAH_ROOT:-$HOME/.local/share/jasnah}"
+JASNAH="${JASNAH_ROOT:-${XDG_DATA_HOME:-$HOME/.local/share}/jasnah}"
 bun run "$JASNAH/scripts/extract-inline.ts" --root "$PWD" --source "jira-PROJ-XXXX"
 ```
 

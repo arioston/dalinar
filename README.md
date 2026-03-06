@@ -231,7 +231,7 @@ echo '<json>' | bun run packages/orchestrator/src/reflect.ts --sprint sprint-42
 bun run packages/orchestrator/src/vault-sync.ts
 
 # Search memories directly
-JASNAH="${JASNAH_ROOT:-$HOME/.local/share/jasnah}"
+JASNAH="${JASNAH_ROOT:-${XDG_DATA_HOME:-$HOME/.local/share}/jasnah}"
 bun run "$JASNAH/scripts/search-memory.ts" "authentication architecture"
 ```
 
