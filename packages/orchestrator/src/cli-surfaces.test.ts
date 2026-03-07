@@ -24,8 +24,13 @@ describe("CLI surfaces", () => {
       expect(output).not.toContain("Cannot find module")
       expect(output).not.toContain("SyntaxError")
       expect(output).not.toContain("ReferenceError")
-      // exit 0 or 1 (usage) are fine, crashes produce higher codes
-      expect(result.exitCode).toBeLessThanOrEqual(1)
+      expect(output).not.toContain("TypeError")
+      expect(output).not.toContain("segmentation fault")
+      expect(output).not.toContain("panic:")
+      expect(output).not.toContain("SIGABRT")
+      expect(output).not.toContain("SIGSEGV")
+      // Signals (128+N) indicate crashes, not normal exits
+      expect(result.exitCode).toBeLessThan(128)
     })
   }
 })

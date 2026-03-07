@@ -53,7 +53,7 @@ Bun monorepo. Orchestrates Jasnah (memory), Sazed (planning), and Hoid (calendar
 - `modules/jasnah/` — Memory extraction and retrieval (git submodule)
 - `modules/sazed/` — Epic analysis and task decomposition (git submodule)
 - `modules/hoid/` — Calendar operations (git submodule)
-- `skills/` — 11 agent skills (local + symlinks into submodules)
+- `skills/` — 12 agent skills (local + symlinks into submodules)
 
 ### Effect.ts Layer (packages/orchestrator/src/effect/)
 
