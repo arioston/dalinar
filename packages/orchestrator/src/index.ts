@@ -12,19 +12,7 @@ export {
   type ExtractEntry,
 } from "./jasnah.js"
 
-export {
-  analyze,
-  syncToJira,
-  checkStatus,
-  listNotes,
-  searchNotes,
-  type AnalyzeOptions,
-  type AnalyzeResult,
-  type SyncOptions,
-  type SyncResult,
-} from "./sazed.js"
-
-export { implementTicket, postImplementExtract } from "./implement-ticket.js"
+export { implementTicketPipeline, postImplementExtractPipeline } from "./implement-ticket.js"
 
 export { runAudit, type AuditReport, type AuditFinding } from "./audit.js"
 
