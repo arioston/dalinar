@@ -1,7 +1,51 @@
 import { Effect } from "effect"
-import { JasnahService, SazedService } from "../services.js"
-import { SazedError } from "../errors.js"
-import { extractNotesFromAnalysis } from "../../extract-notes.js"
+import { JasnahService, SazedService, type ExtractEntry } from "../services.js"
+import type { SazedAnalyzeOutput } from "@dalinar/protocol"
+
+// ── Structured note extraction ────────────────────────────────────
+
+const MAX_NOTES = 8
+
+function structuredNotesToEntries(
+  output: SazedAnalyzeOutput,
+  ctx: { epicKey: string; taskKey?: string | undefined },
+): ExtractEntry[] {
+  const tags = [ctx.epicKey.toLowerCase()]
+  if (ctx.taskKey) tags.push(ctx.taskKey.toLowerCase())
+
+  const entries: ExtractEntry[] = []
+
+  for (const note of output.notes) {
+    if (note.content.length < 30) continue
+    entries.push({
+      type: note.type,
+      summary: note.title.slice(0, 100),
+      content: note.content.slice(0, 2000),
+      tags: [...tags, ...note.tags.slice(0, 2)],
+      confidence: "high",
+    })
+  }
+
+  if (output.contextSummary.length > 50) {
+    entries.push({
+      type: "architecture",
+      summary: `Architecture context for ${ctx.epicKey}`.slice(0, 100),
+      content: output.contextSummary.slice(0, 2000),
+      tags: [...tags],
+      confidence: "medium",
+    })
+  }
+
+  if (entries.length > MAX_NOTES) {
+    entries.sort((a, b) => {
+      const order = { high: 0, medium: 1, low: 2 }
+      return (order[a.confidence] ?? 2) - (order[b.confidence] ?? 2)
+    })
+    entries.length = MAX_NOTES
+  }
+
+  return entries
+}
 
 // ── Shared analysis helper ────────────────────────────────────────
 // Reusable building block for both analyzeWithContextPipeline and
@@ -55,7 +99,7 @@ export const analyzeTask = (opts: AnalyzeTaskOptions) =>
       contextBlock = [contextBlock, opts.extraContext].filter(Boolean).join("\n\n")
     }
 
-    // Step 3: Run Sazed analysis
+    // Step 3: Run Sazed analysis (returns structured JSON, errors via error channel)
     const result = yield* sazed.analyze({
       epicKey: opts.epicKey,
       context: contextBlock,
@@ -66,17 +110,10 @@ export const analyzeTask = (opts: AnalyzeTaskOptions) =>
       ...(opts.forensics ? { forensics: opts.forensics } : {}),
     })
 
-    if (!result.success) {
-      return yield* new SazedError({
-        message: `Analysis failed:\n${result.markdown}`,
-        epicKey: opts.epicKey,
-      })
-    }
-
-    // Step 4: Extract notes back to Jasnah
+    // Step 4: Extract notes back to Jasnah (structured data, no regex parsing)
     const epicKey = opts.epicKey
     const taskKey = opts.taskKey
-    const newNotes = extractNotesFromAnalysis(result.markdown, { epicKey, taskKey })
+    const newNotes = structuredNotesToEntries(result, { epicKey, taskKey })
 
     const source = taskKey
       ? `dalinar-analyze-${epicKey}-task-${taskKey}`

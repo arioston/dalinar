@@ -50,3 +50,17 @@ export {
   vaultGlobalPath,
   vaultGlobalDirectories,
 } from "./vault.js";
+
+export {
+  SAZED_CONTRACT_VERSION,
+  SazedEnvelope,
+  SazedTechnicalDef,
+  SazedTaskOutput,
+  SazedNoteOutput,
+  SazedAnalyzeOutput,
+  SazedSyncOutput,
+  SazedStatusEntry,
+  SazedStatusOutput,
+  SazedNoteHeader,
+  SazedNotesListOutput,
+} from "./sazed-contract.js";

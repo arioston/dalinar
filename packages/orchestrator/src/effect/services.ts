@@ -1,8 +1,15 @@
-import { Context, Effect, Layer } from "effect"
+import { Context, Effect, Layer, Schema } from "effect"
 import { $ } from "bun"
 import { resolve } from "path"
 import { JasnahError, SazedError, HoidError } from "./errors.js"
 import { SubprocessService } from "./subprocess.js"
+import {
+  SAZED_CONTRACT_VERSION,
+  SazedAnalyzeOutput,
+  SazedSyncOutput,
+  SazedStatusOutput,
+  SazedNotesListOutput,
+} from "@dalinar/protocol"
 
 // ── Jasnah Service ─────────────────────────────────────────────────
 
@@ -248,36 +255,25 @@ export interface AnalyzeOptions {
   stdout?: boolean
 }
 
-export interface AnalyzeResult {
-  success: boolean
-  markdown: string
-  outputPath?: string
-}
-
 export interface SyncOptions {
   epicKey: string
   dryRun?: boolean
 }
 
-export interface SyncResult {
-  success: boolean
-  output: string
-}
-
 export interface SazedServiceShape {
   readonly analyze: (
     opts: AnalyzeOptions,
-  ) => Effect.Effect<AnalyzeResult, SazedError>
+  ) => Effect.Effect<SazedAnalyzeOutput, SazedError>
   readonly syncToJira: (
     opts: SyncOptions,
-  ) => Effect.Effect<SyncResult, SazedError>
+  ) => Effect.Effect<SazedSyncOutput, SazedError>
   readonly checkStatus: (
     epicKey: string,
-  ) => Effect.Effect<string, SazedError>
-  readonly listNotes: () => Effect.Effect<string, SazedError>
+  ) => Effect.Effect<SazedStatusOutput, SazedError>
+  readonly listNotes: () => Effect.Effect<SazedNotesListOutput, SazedError>
   readonly searchNotes: (
     query: string,
-  ) => Effect.Effect<string, SazedError>
+  ) => Effect.Effect<SazedNotesListOutput, SazedError>
 }
 
 export class SazedService extends Context.Tag("@dalinar/SazedService")<
@@ -315,56 +311,110 @@ const makeSazed = Effect.gen(function* () {
         ),
       )
 
+  const decodeSazed = <A, I, R>(schema: Schema.Schema<A, I, R>) =>
+    (stdout: string) => {
+      const Envelope = Schema.parseJson(
+        Schema.Struct({
+          contractVersion: Schema.String,
+          data: schema,
+        }),
+      )
+      return Schema.decodeUnknown(Envelope)(stdout).pipe(
+        Effect.tap((envelope) =>
+          envelope.contractVersion !== SAZED_CONTRACT_VERSION
+            ? Effect.logWarning(
+                `Sazed contract version mismatch: expected ${SAZED_CONTRACT_VERSION}, got ${envelope.contractVersion}`,
+              )
+            : Effect.void,
+        ),
+        Effect.map((envelope) => envelope.data),
+        Effect.mapError(
+          (e) =>
+            new SazedError({
+              message: `Failed to decode Sazed output: ${e.message}`,
+            }),
+        ),
+      )
+    }
+
   const analyze: SazedServiceShape["analyze"] = (opts) =>
     Effect.gen(function* () {
-      const args: string[] = ["analyze", opts.epicKey]
+      const args: string[] = ["analyze", opts.epicKey, "--json"]
       if (opts.force) args.push("--force")
       if (opts.notes) args.push("--notes")
       if (opts.noMap) args.push("--no-map")
       if (opts.noCache) args.push("--no-cache")
       if (opts.forensics) args.push("--forensics")
-      args.push("--stdout")
 
       const env = opts.context ? { DALINAR_CONTEXT: opts.context } : undefined
       const result = yield* runSazed(args, env)
 
       if (result.exitCode !== 0) {
-        return {
-          success: false,
-          markdown: result.stderr,
-        }
+        return yield* new SazedError({
+          message: `Analysis failed: ${result.stderr}`,
+          epicKey: opts.epicKey,
+        })
       }
 
-      return { success: true, markdown: result.stdout }
+      return yield* decodeSazed(SazedAnalyzeOutput)(result.stdout)
     })
 
   const syncToJira: SazedServiceShape["syncToJira"] = (opts) =>
     Effect.gen(function* () {
-      const args: string[] = ["sync", opts.epicKey]
+      const args: string[] = ["sync", opts.epicKey, "--json"]
       if (opts.dryRun) args.push("--dry-run")
 
       const result = yield* runSazed(args)
 
-      return {
-        success: result.exitCode === 0,
-        output: result.stdout || result.stderr,
+      if (result.exitCode !== 0) {
+        return yield* new SazedError({
+          message: `Sync failed: ${result.stderr}`,
+          epicKey: opts.epicKey,
+        })
       }
+
+      return yield* decodeSazed(SazedSyncOutput)(result.stdout)
     })
 
   const checkStatus: SazedServiceShape["checkStatus"] = (epicKey) =>
-    runSazed(["status", epicKey]).pipe(
-      Effect.map((r) => r.stdout || r.stderr),
-    )
+    Effect.gen(function* () {
+      const result = yield* runSazed(["status", epicKey, "--json"])
+
+      if (result.exitCode !== 0) {
+        return yield* new SazedError({
+          message: `Status check failed: ${result.stderr}`,
+          epicKey,
+        })
+      }
+
+      return yield* decodeSazed(SazedStatusOutput)(result.stdout)
+    })
 
   const listNotes: SazedServiceShape["listNotes"] = () =>
-    runSazed(["notes", "list"]).pipe(
-      Effect.map((r) => r.stdout || r.stderr),
-    )
+    Effect.gen(function* () {
+      const result = yield* runSazed(["notes", "list", "--json"])
+
+      if (result.exitCode !== 0) {
+        return yield* new SazedError({
+          message: `Notes list failed: ${result.stderr}`,
+        })
+      }
+
+      return yield* decodeSazed(SazedNotesListOutput)(result.stdout)
+    })
 
   const searchNotes: SazedServiceShape["searchNotes"] = (query) =>
-    runSazed(["notes", "search", query]).pipe(
-      Effect.map((r) => r.stdout || r.stderr),
-    )
+    Effect.gen(function* () {
+      const result = yield* runSazed(["notes", "search", query, "--json"])
+
+      if (result.exitCode !== 0) {
+        return yield* new SazedError({
+          message: `Notes search failed: ${result.stderr}`,
+        })
+      }
+
+      return yield* decodeSazed(SazedNotesListOutput)(result.stdout)
+    })
 
   return {
     analyze,

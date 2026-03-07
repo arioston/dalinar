@@ -95,18 +95,24 @@ export const implementTicketPipeline = (opts: ImplementOptions) =>
     // Stage 2: Optionally run Sazed analysis
     if (opts.shouldAnalyze) {
       yield* Effect.log(`Step 2: Running Sazed analysis for ${ticketKey}...`)
-      const result = yield* sazed.analyze({
+      const analysisResult = yield* sazed.analyze({
         epicKey: ticketKey,
         force: false,
         notes: true,
-      })
-      if (result.success) {
-        context.analysisMarkdown = result.markdown
+      }).pipe(
+        Effect.map((output) => ({ success: true as const, output })),
+        Effect.catchAll((e) =>
+          Effect.as(
+            Effect.logWarning(`  Analysis failed: ${e.message}, continuing without it`),
+            { success: false as const, output: null },
+          ),
+        ),
+      )
+      if (analysisResult.success) {
+        context.analysisMarkdown = analysisResult.output.markdown
         yield* Effect.log(
-          `  Analysis complete (${result.markdown.length} chars)`,
+          `  Analysis complete (${analysisResult.output.markdown.length} chars)`,
         )
-      } else {
-        yield* Effect.logWarning("  Analysis failed, continuing without it")
       }
     }
 

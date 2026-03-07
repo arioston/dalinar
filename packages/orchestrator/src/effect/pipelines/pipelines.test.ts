@@ -1,6 +1,8 @@
 import { describe, expect, test } from "bun:test"
 import { Effect, Layer } from "effect"
 import { JasnahService, SazedService, type JasnahServiceShape, type SazedServiceShape } from "../services.js"
+import { SazedError } from "../errors.js"
+import { SazedAnalyzeOutput, SazedSyncOutput, SazedStatusOutput, SazedNotesListOutput } from "@dalinar/protocol"
 import { reflectPipeline, reflectionToMemories } from "./reflect.js"
 import { dialecticPipeline } from "./dialectic.js"
 import { analyzeWithContextPipeline } from "./analyze.js"
@@ -17,25 +19,32 @@ const TestJasnah = Layer.succeed(JasnahService, {
   formatContextForPrompt: () => Effect.succeed(""),
 } satisfies JasnahServiceShape)
 
+const testAnalyzeOutput = new SazedAnalyzeOutput({
+  epicKey: "EPIC-1",
+  epicSummary: "Test epic",
+  contextSummary: "This is test context that is long enough to be extracted as a note.",
+  tasks: [],
+  notes: [],
+  diffFromPrevious: null,
+  markdown: "# Test Analysis\n\n## Context Summary\nThis is test context that is long enough to be extracted as a note.",
+  basedOnCommit: "abc1234",
+  createdAt: new Date().toISOString(),
+})
+
 const TestSazed = Layer.succeed(SazedService, {
-  analyze: () =>
-    Effect.succeed({
-      success: true,
-      markdown: "# Test Analysis\n\n## Context Summary\nThis is test context that is long enough to be extracted as a note.",
-    }),
-  syncToJira: () => Effect.succeed({ success: true, output: "synced" }),
-  checkStatus: () => Effect.succeed("status ok"),
-  listNotes: () => Effect.succeed("no notes"),
-  searchNotes: () => Effect.succeed("no results"),
+  analyze: () => Effect.succeed(testAnalyzeOutput),
+  syncToJira: () => Effect.succeed(new SazedSyncOutput({ created: [], updated: [], skipped: [] })),
+  checkStatus: () => Effect.succeed(new SazedStatusOutput({ epicKey: "EPIC-1", basedOnCommit: "abc1234", tasks: [] })),
+  listNotes: () => Effect.succeed(new SazedNotesListOutput({ notes: [] })),
+  searchNotes: () => Effect.succeed(new SazedNotesListOutput({ notes: [] })),
 } satisfies SazedServiceShape)
 
 const FailingSazed = Layer.succeed(SazedService, {
-  analyze: () =>
-    Effect.succeed({ success: false, markdown: "analysis failed" }),
-  syncToJira: () => Effect.succeed({ success: false, output: "sync failed" }),
-  checkStatus: () => Effect.succeed("error"),
-  listNotes: () => Effect.succeed(""),
-  searchNotes: () => Effect.succeed(""),
+  analyze: () => Effect.fail(new SazedError({ message: "analysis failed" })),
+  syncToJira: () => Effect.fail(new SazedError({ message: "sync failed" })),
+  checkStatus: () => Effect.fail(new SazedError({ message: "status failed" })),
+  listNotes: () => Effect.fail(new SazedError({ message: "list failed" })),
+  searchNotes: () => Effect.fail(new SazedError({ message: "search failed" })),
 } satisfies SazedServiceShape)
 
 const TestLayer = Layer.mergeAll(TestJasnah, TestSazed)
