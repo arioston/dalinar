@@ -311,6 +311,16 @@ const makeSazed = Effect.gen(function* () {
         ),
       )
 
+  /** Extract last JSON line from mixed stdout (Effect logs may precede the envelope). */
+  const extractJson = (stdout: string): string => {
+    const lines = stdout.trim().split("\n")
+    for (let i = lines.length - 1; i >= 0; i--) {
+      const line = lines[i].trim()
+      if (line.startsWith("{")) return line
+    }
+    return stdout
+  }
+
   const decodeSazed = <A, I, R>(schema: Schema.Schema<A, I, R>) =>
     (stdout: string) => {
       const Envelope = Schema.parseJson(
@@ -319,7 +329,7 @@ const makeSazed = Effect.gen(function* () {
           data: schema,
         }),
       )
-      return Schema.decodeUnknown(Envelope)(stdout).pipe(
+      return Schema.decodeUnknown(Envelope)(extractJson(stdout)).pipe(
         Effect.tap((envelope) =>
           envelope.contractVersion !== SAZED_CONTRACT_VERSION
             ? Effect.logWarning(
