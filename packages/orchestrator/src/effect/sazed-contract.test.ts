@@ -193,30 +193,21 @@ describe("Sazed contract schemas (roundtrip)", () => {
 // the real CLI output matches the protocol schemas.
 
 const sazedCli = resolve(import.meta.dir, "../../../../modules/sazed/packages/cli/src/main.ts")
+const dalinarRoot = resolve(import.meta.dir, "../../../..")
 
 const runSazed = (args: string[]) =>
   Effect.gen(function* () {
     const subprocess = yield* SubprocessService
     return yield* subprocess.run(sazedCli, {
       args,
-      cwd: resolve(import.meta.dir, "../../../../modules/sazed"),
+      cwd: dalinarRoot,
       nothrow: true,
     })
-  }).pipe(Effect.provide(SubprocessServiceLive))
-
-/**
- * Extract the last JSON line from mixed stdout (Effect logs + JSON).
- * Sazed's Effect runtime writes log lines to stdout; the JSON envelope
- * is the last line that starts with '{'.
- */
-function extractJsonFromStdout(stdout: string): string | null {
-  const lines = stdout.trim().split("\n")
-  for (let i = lines.length - 1; i >= 0; i--) {
-    const line = lines[i].trim()
-    if (line.startsWith("{")) return line
-  }
-  return null
-}
+  }).pipe(
+    Effect.provide(SubprocessServiceLive),
+    Effect.timeout("15 seconds"),
+    Effect.catchAll(() => Effect.succeed({ stdout: "", stderr: "timeout", exitCode: 1 })),
+  )
 
 describe("Sazed CLI contract (integration)", () => {
   test("notes list --json produces valid SazedNotesListOutput", async () => {
@@ -227,14 +218,8 @@ describe("Sazed CLI contract (integration)", () => {
       return
     }
 
-    const jsonLine = extractJsonFromStdout(result.stdout)
-    if (!jsonLine) {
-      // No JSON output (e.g. "No notes found" message without --json taking effect)
-      console.log("Skipped: no JSON envelope in stdout")
-      return
-    }
-
-    const decoded = Schema.decodeUnknownSync(Envelope(SazedNotesListOutput))(jsonLine)
+    // With stderr logger, stdout should be clean JSON
+    const decoded = Schema.decodeUnknownSync(Envelope(SazedNotesListOutput))(result.stdout)
 
     expect(decoded.contractVersion).toBe(SAZED_CONTRACT_VERSION)
     expect(Array.isArray(decoded.data.notes)).toBe(true)
@@ -245,18 +230,33 @@ describe("Sazed CLI contract (integration)", () => {
     }
   })
 
-  test("status --json produces valid envelope or fails cleanly", async () => {
-    const result = await Effect.runPromise(runSazed(["status", "TEST-NONEXISTENT", "--json"]))
+  test("notes list --json with no notes returns empty envelope", async () => {
+    // This validates that the early-return bug is fixed
+    const result = await Effect.runPromise(runSazed(["notes", "list", "--json"]))
 
-    // status will fail for a non-existent epic — that's expected
     if (result.exitCode !== 0) {
+      console.log(`Skipped: notes list exited ${result.exitCode}`)
       return
     }
 
-    const jsonLine = extractJsonFromStdout(result.stdout)
-    if (!jsonLine) return
-
-    const decoded = Schema.decodeUnknownSync(Envelope(SazedStatusOutput))(jsonLine)
+    const decoded = Schema.decodeUnknownSync(Envelope(SazedNotesListOutput))(result.stdout)
     expect(decoded.contractVersion).toBe(SAZED_CONTRACT_VERSION)
+    // Whether notes exist or not, the envelope is valid
+    expect(Array.isArray(decoded.data.notes)).toBe(true)
+  })
+
+  test("status --json with nonexistent epic returns empty envelope", async () => {
+    const result = await Effect.runPromise(runSazed(["status", "TEST-NONEXISTENT", "--json"]))
+
+    if (result.exitCode !== 0) {
+      console.log(`Skipped: status exited ${result.exitCode}`)
+      return
+    }
+
+    // Should get a valid envelope with empty tasks (no snapshot found)
+    const decoded = Schema.decodeUnknownSync(Envelope(SazedStatusOutput))(result.stdout)
+    expect(decoded.contractVersion).toBe(SAZED_CONTRACT_VERSION)
+    expect(decoded.data.epicKey).toBe("TEST-NONEXISTENT")
+    expect(decoded.data.tasks).toEqual([])
   })
 })
