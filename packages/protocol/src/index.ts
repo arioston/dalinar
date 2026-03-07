@@ -53,7 +53,6 @@ export {
 
 export {
   SAZED_CONTRACT_VERSION,
-  SazedEnvelope,
   SazedTechnicalDef,
   SazedTaskOutput,
   SazedNoteOutput,

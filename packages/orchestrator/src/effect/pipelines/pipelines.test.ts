@@ -25,6 +25,7 @@ const testAnalyzeOutput = new SazedAnalyzeOutput({
   contextSummary: "This is test context that is long enough to be extracted as a note.",
   tasks: [],
   notes: [],
+  communicationFlow: { applicable: false },
   diffFromPrevious: null,
   markdown: "# Test Analysis\n\n## Context Summary\nThis is test context that is long enough to be extracted as a note.",
   basedOnCommit: "abc1234",

@@ -12,12 +12,6 @@ import { Schema } from "effect"
 
 export const SAZED_CONTRACT_VERSION = "1.0.0" as const
 
-export const SazedEnvelope = <A extends Schema.Schema.AnyNoContext>(dataSchema: A) =>
-  Schema.Struct({
-    contractVersion: Schema.String,
-    data: dataSchema,
-  })
-
 // ── analyze --json ───────────────────────────────────────────────
 
 export class SazedTechnicalDef extends Schema.Class<SazedTechnicalDef>("SazedTechnicalDef")({
@@ -54,10 +48,10 @@ export class SazedAnalyzeOutput extends Schema.Class<SazedAnalyzeOutput>("SazedA
   contextSummary: Schema.String,
   tasks: Schema.Array(SazedTaskOutput),
   notes: Schema.Array(SazedNoteOutput),
-  communicationFlow: Schema.optional(Schema.Struct({
+  communicationFlow: Schema.Struct({
     applicable: Schema.Boolean,
     mermaidDiagram: Schema.optional(Schema.String),
-  })),
+  }),
   diffFromPrevious: Schema.NullOr(Schema.String),
   markdown: Schema.String,
   basedOnCommit: Schema.String,

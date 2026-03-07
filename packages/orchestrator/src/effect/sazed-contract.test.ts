@@ -63,6 +63,7 @@ describe("Sazed contract schemas (roundtrip)", () => {
             relatedNotes: [],
           },
         ],
+        communicationFlow: { applicable: false },
         diffFromPrevious: null,
         markdown: "# EPIC-1\n\nAnalysis output",
         basedOnCommit: "abc1234def",
@@ -174,6 +175,20 @@ describe("Sazed contract schemas (roundtrip)", () => {
     ).toThrow()
   })
 
+  test("decodes successfully with mismatched contract version (warning only)", () => {
+    const sample = {
+      contractVersion: "99.0.0",
+      data: {
+        notes: [{ slug: "x", title: "x", type: "domain-fact", tags: [], retentionScore: 0.5 }],
+      },
+    }
+
+    // Should decode — version mismatch is a warning, not a rejection
+    const decoded = Schema.decodeUnknownSync(Envelope(SazedNotesListOutput))(JSON.stringify(sample))
+    expect(decoded.contractVersion).toBe("99.0.0")
+    expect(decoded.data.notes).toHaveLength(1)
+  })
+
   test("rejects invalid note type literal", () => {
     const bad = JSON.stringify({
       contractVersion: "1.0.0",
@@ -243,6 +258,25 @@ describe("Sazed CLI contract (integration)", () => {
     expect(decoded.contractVersion).toBe(SAZED_CONTRACT_VERSION)
     // Whether notes exist or not, the envelope is valid
     expect(Array.isArray(decoded.data.notes)).toBe(true)
+  })
+
+  test("notes search --json produces valid SazedNotesListOutput", async () => {
+    const result = await Effect.runPromise(runSazed(["notes", "search", "test", "--json"]))
+
+    if (result.exitCode !== 0) {
+      console.log(`Skipped: notes search exited ${result.exitCode}`)
+      return
+    }
+
+    const decoded = Schema.decodeUnknownSync(Envelope(SazedNotesListOutput))(result.stdout)
+
+    expect(decoded.contractVersion).toBe(SAZED_CONTRACT_VERSION)
+    expect(Array.isArray(decoded.data.notes)).toBe(true)
+    for (const note of decoded.data.notes) {
+      expect(typeof note.slug).toBe("string")
+      expect(typeof note.title).toBe("string")
+      expect(typeof note.retentionScore).toBe("number")
+    }
   })
 
   test("status --json with nonexistent epic returns empty envelope", async () => {

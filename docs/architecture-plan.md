@@ -385,10 +385,7 @@ dalinar/
 │       │   ├── reflect.ts               # Post-sprint retrospective capture
 │       │   ├── vault-sync.ts            # Sync .memory/ to Obsidian vault
 │       │   ├── jasnah.ts                # Jasnah integration (search, extract)
-│       │   ├── sazed.ts                 # Sazed integration (analysis runner)
 │       │   ├── hoid.ts                  # Hoid integration (calendar operations)
-│       │   ├── resolve-key.ts           # Jira key resolution (task → parent epic)
-│       │   ├── extract-notes.ts         # Pure extraction: analysis markdown → notes
 │       │   ├── skills.ts                # Skill discovery & dependency validation
 │       │   ├── index.ts
 │       │   └── effect/                  # Effect.ts typed pipeline layer
@@ -1223,7 +1220,7 @@ This ensures both submodules work identically whether standalone or inside the D
 - Task key resolution: detect task key → resolve to parent epic via Jira API
 - Enriched Jasnah search with task key for narrower context
 - Richer knowledge extraction from analysis output (5 extraction rules, 8-note budget)
-- `resolve-key.ts` and `extract-notes.ts` shared modules
+- Shared modules (now superseded by Effect services + `@dalinar/protocol` contract schemas)
 
 ### Future Work
 
