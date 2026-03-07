@@ -4,15 +4,30 @@ import { discoverSkills, validateDependencies } from "./skills.js";
 
 const SKILLS_DIR = join(import.meta.dir, "../../../skills");
 
+const EXPECTED_SKILLS = [
+  "calendar",
+  "dialectic",
+  "gsap-react",
+  "image-to-webp",
+  "jasnah-debug-trace",
+  "jasnah-export-memory",
+  "jasnah-query",
+  "jasnah-search-memory",
+  "jira",
+  "reducing-entropy",
+  "sanity-tools",
+  "using-git-worktrees",
+] as const;
+
 describe("discoverSkills", () => {
-  test("discovers existing skills from skills/ directory", async () => {
+  test("discovers all 12 skills from skills/ directory", async () => {
     const registry = await discoverSkills(SKILLS_DIR);
 
-    expect(registry.skills.size).toBeGreaterThanOrEqual(5);
-    expect(registry.skills.has("jira")).toBe(true);
-    expect(registry.skills.has("dialectic")).toBe(true);
-    expect(registry.skills.has("using-git-worktrees")).toBe(true);
-    expect(registry.skills.has("jasnah-search-memory")).toBe(true);
+    expect(registry.errors).toEqual([]);
+    expect(registry.skills.size).toBe(EXPECTED_SKILLS.length);
+    for (const name of EXPECTED_SKILLS) {
+      expect(registry.skills.has(name), `missing skill: ${name}`).toBe(true);
+    }
   });
 
   test("parses depends-on from dialectic skill", async () => {

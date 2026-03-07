@@ -13,8 +13,10 @@ import {
   SazedSyncOutput,
   SazedStatusOutput,
   SazedNotesListOutput,
+  checkVersionCompat,
 } from "@dalinar/protocol"
 import { SubprocessService, SubprocessServiceLive } from "./subprocess.js"
+import { resolveDalinarRoot } from "./paths.js"
 import { resolve } from "path"
 
 const Envelope = <A extends Schema.Schema.AnyNoContext>(dataSchema: A) =>
@@ -24,6 +26,8 @@ const Envelope = <A extends Schema.Schema.AnyNoContext>(dataSchema: A) =>
       data: dataSchema,
     }),
   )
+
+const SKIP_INTEGRATION = !!process.env.SKIP_INTEGRATION_TESTS
 
 // ── Schema roundtrip tests (no subprocess, always run) ──────────
 
@@ -175,7 +179,21 @@ describe("Sazed contract schemas (roundtrip)", () => {
     ).toThrow()
   })
 
-  test("decodes successfully with mismatched contract version (warning only)", () => {
+  test("decodes successfully with minor version drift (schema level)", () => {
+    const sample = {
+      contractVersion: "1.1.0",
+      data: {
+        notes: [{ slug: "x", title: "x", type: "domain-fact", tags: [], retentionScore: 0.5 }],
+      },
+    }
+
+    // Schema decodes fine — version enforcement is at the service layer
+    const decoded = Schema.decodeUnknownSync(Envelope(SazedNotesListOutput))(JSON.stringify(sample))
+    expect(decoded.contractVersion).toBe("1.1.0")
+    expect(decoded.data.notes).toHaveLength(1)
+  })
+
+  test("decodes at schema level even with major mismatch (enforcement is in service)", () => {
     const sample = {
       contractVersion: "99.0.0",
       data: {
@@ -183,10 +201,9 @@ describe("Sazed contract schemas (roundtrip)", () => {
       },
     }
 
-    // Should decode — version mismatch is a warning, not a rejection
+    // Schema itself does not enforce version — that happens in decodeSazed
     const decoded = Schema.decodeUnknownSync(Envelope(SazedNotesListOutput))(JSON.stringify(sample))
     expect(decoded.contractVersion).toBe("99.0.0")
-    expect(decoded.data.notes).toHaveLength(1)
   })
 
   test("rejects invalid note type literal", () => {
@@ -203,12 +220,30 @@ describe("Sazed contract schemas (roundtrip)", () => {
   })
 })
 
+// ── Version compatibility tests ──────────────────────────────────
+
+describe("Contract version policy", () => {
+  test("exact match returns 'exact'", () => {
+    expect(checkVersionCompat("1.0.0", "1.0.0")).toBe("exact")
+  })
+
+  test("minor drift returns 'minor-drift'", () => {
+    expect(checkVersionCompat("1.0.0", "1.1.0")).toBe("minor-drift")
+    expect(checkVersionCompat("1.0.0", "1.0.1")).toBe("minor-drift")
+  })
+
+  test("major mismatch returns 'major-mismatch'", () => {
+    expect(checkVersionCompat("1.0.0", "2.0.0")).toBe("major-mismatch")
+    expect(checkVersionCompat("1.0.0", "99.0.0")).toBe("major-mismatch")
+  })
+})
+
 // ── Integration tests (real subprocess) ──────────────────────────
 // These require the Sazed CLI to be available. They validate that
 // the real CLI output matches the protocol schemas.
 
-const sazedCli = resolve(import.meta.dir, "../../../../modules/sazed/packages/cli/src/main.ts")
-const dalinarRoot = resolve(import.meta.dir, "../../../..")
+const dalinarRoot = resolveDalinarRoot()
+const sazedCli = resolve(dalinarRoot, "modules/sazed/packages/cli/src/main.ts")
 
 const runSazed = (args: string[]) =>
   Effect.gen(function* () {
@@ -224,16 +259,23 @@ const runSazed = (args: string[]) =>
     Effect.catchAll(() => Effect.succeed({ stdout: "", stderr: "timeout", exitCode: 1 })),
   )
 
-describe("Sazed CLI contract (integration)", () => {
+/** Assert stdout is pure JSON (no log lines mixed in). */
+function assertCleanJson(stdout: string) {
+  const trimmed = stdout.trim()
+  expect(
+    trimmed.startsWith("{") || trimmed.startsWith("["),
+    `stdout must start with JSON, got: ${trimmed.slice(0, 80)}`,
+  ).toBe(true)
+  expect(() => JSON.parse(trimmed)).not.toThrow()
+}
+
+describe.skipIf(SKIP_INTEGRATION)("Sazed CLI contract (integration)", () => {
   test("notes list --json produces valid SazedNotesListOutput", async () => {
     const result = await Effect.runPromise(runSazed(["notes", "list", "--json"]))
 
-    if (result.exitCode !== 0) {
-      console.log(`Skipped: notes list exited ${result.exitCode}`)
-      return
-    }
+    expect(result.exitCode, `sazed failed: ${result.stderr}`).toBe(0)
+    assertCleanJson(result.stdout)
 
-    // With stderr logger, stdout should be clean JSON
     const decoded = Schema.decodeUnknownSync(Envelope(SazedNotesListOutput))(result.stdout)
 
     expect(decoded.contractVersion).toBe(SAZED_CONTRACT_VERSION)
@@ -246,27 +288,21 @@ describe("Sazed CLI contract (integration)", () => {
   })
 
   test("notes list --json with no notes returns empty envelope", async () => {
-    // This validates that the early-return bug is fixed
     const result = await Effect.runPromise(runSazed(["notes", "list", "--json"]))
 
-    if (result.exitCode !== 0) {
-      console.log(`Skipped: notes list exited ${result.exitCode}`)
-      return
-    }
+    expect(result.exitCode, `sazed failed: ${result.stderr}`).toBe(0)
+    assertCleanJson(result.stdout)
 
     const decoded = Schema.decodeUnknownSync(Envelope(SazedNotesListOutput))(result.stdout)
     expect(decoded.contractVersion).toBe(SAZED_CONTRACT_VERSION)
-    // Whether notes exist or not, the envelope is valid
     expect(Array.isArray(decoded.data.notes)).toBe(true)
   })
 
   test("notes search --json produces valid SazedNotesListOutput", async () => {
     const result = await Effect.runPromise(runSazed(["notes", "search", "test", "--json"]))
 
-    if (result.exitCode !== 0) {
-      console.log(`Skipped: notes search exited ${result.exitCode}`)
-      return
-    }
+    expect(result.exitCode, `sazed failed: ${result.stderr}`).toBe(0)
+    assertCleanJson(result.stdout)
 
     const decoded = Schema.decodeUnknownSync(Envelope(SazedNotesListOutput))(result.stdout)
 
@@ -282,12 +318,9 @@ describe("Sazed CLI contract (integration)", () => {
   test("status --json with nonexistent epic returns empty envelope", async () => {
     const result = await Effect.runPromise(runSazed(["status", "TEST-NONEXISTENT", "--json"]))
 
-    if (result.exitCode !== 0) {
-      console.log(`Skipped: status exited ${result.exitCode}`)
-      return
-    }
+    expect(result.exitCode, `sazed failed: ${result.stderr}`).toBe(0)
+    assertCleanJson(result.stdout)
 
-    // Should get a valid envelope with empty tasks (no snapshot found)
     const decoded = Schema.decodeUnknownSync(Envelope(SazedStatusOutput))(result.stdout)
     expect(decoded.contractVersion).toBe(SAZED_CONTRACT_VERSION)
     expect(decoded.data.epicKey).toBe("TEST-NONEXISTENT")

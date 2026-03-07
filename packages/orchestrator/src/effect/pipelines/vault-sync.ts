@@ -3,6 +3,7 @@ import { $ } from "bun"
 import { resolve } from "path"
 import { resolveVaultConfig, vaultProjectPath } from "@dalinar/protocol"
 import { VaultSyncError } from "../errors.js"
+import { resolveDalinarRoot } from "../paths.js"
 
 export interface VaultSyncResult {
   synced: boolean
@@ -26,10 +27,7 @@ export const vaultSyncPipeline = (
     }
 
     const root = projectRoot ?? process.cwd()
-    const scriptPath = resolve(
-      import.meta.dir,
-      "../../../../scripts/vault-sync.sh",
-    )
+    const scriptPath = resolve(resolveDalinarRoot(), "scripts/vault-sync.sh")
 
     const result = yield* Effect.tryPromise({
       try: () =>

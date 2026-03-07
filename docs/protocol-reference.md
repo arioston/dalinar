@@ -195,6 +195,54 @@ const custom = resolveVaultConfig({
 
 ---
 
+## Sazed Contract Schemas
+
+Wire types for the subprocess boundary between the orchestrator and Sazed CLI. Both sides import these schemas — Sazed encodes, the orchestrator decodes.
+
+### Contract Version
+
+Current: `1.0.0`
+
+Version policy:
+- **Exact match**: no action
+- **Minor drift** (e.g., 1.0.0 vs 1.1.0): warning logged, processing continues
+- **Major mismatch** (e.g., 1.x vs 2.x): hard failure (`SazedError`)
+
+### Envelope Format
+
+All Sazed `--json` output is wrapped:
+
+```json
+{ "contractVersion": "1.0.0", "data": { ... } }
+```
+
+### Schemas
+
+| Schema | CLI Command | Description |
+|--------|-------------|-------------|
+| `SazedAnalyzeOutput` | `analyze --json` | Epic analysis with tasks, notes, communication flow |
+| `SazedSyncOutput` | `sync --json` | Jira sync results (created, updated, skipped) |
+| `SazedStatusOutput` | `status --json` | Task staleness check per epic |
+| `SazedNotesListOutput` | `notes list/search --json` | Notes listing and search results |
+
+### API
+
+```typescript
+import {
+  SAZED_CONTRACT_VERSION,
+  SazedAnalyzeOutput,
+  SazedSyncOutput,
+  SazedStatusOutput,
+  SazedNotesListOutput,
+  checkVersionCompat,
+} from "@dalinar/protocol"
+
+checkVersionCompat("1.0.0", "1.1.0")  // → "minor-drift"
+checkVersionCompat("1.0.0", "2.0.0")  // → "major-mismatch"
+```
+
+---
+
 ## Wiring Pattern
 
 Both Jasnah and Sazed use the same pattern to delegate to protocol:

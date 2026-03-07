@@ -62,4 +62,11 @@ export {
   SazedStatusOutput,
   SazedNoteHeader,
   SazedNotesListOutput,
-} from "./sazed-contract.js";
+} from "./sazed-contract.js"
+
+export {
+  type SemverParts,
+  type VersionCompat,
+  parseSemver,
+  checkVersionCompat,
+} from "./version.js";

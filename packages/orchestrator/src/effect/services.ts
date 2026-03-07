@@ -3,12 +3,14 @@ import { $ } from "bun"
 import { resolve } from "path"
 import { JasnahError, SazedError, HoidError } from "./errors.js"
 import { SubprocessService } from "./subprocess.js"
+import { resolveDalinarRoot } from "./paths.js"
 import {
   SAZED_CONTRACT_VERSION,
   SazedAnalyzeOutput,
   SazedSyncOutput,
   SazedStatusOutput,
   SazedNotesListOutput,
+  checkVersionCompat,
 } from "@dalinar/protocol"
 
 // ── Jasnah Service ─────────────────────────────────────────────────
@@ -282,8 +284,7 @@ export class SazedService extends Context.Tag("@dalinar/SazedService")<
 >() {}
 
 function resolveSazedRoot(): string {
-  const dalinarRoot = process.env.DALINAR_ROOT ?? process.cwd()
-  return resolve(dalinarRoot, "modules/sazed")
+  return resolve(resolveDalinarRoot(), "modules/sazed")
 }
 
 function sazedCli(): string {
@@ -320,13 +321,23 @@ const makeSazed = Effect.gen(function* () {
         }),
       )
       return Schema.decodeUnknown(Envelope)(stdout).pipe(
-        Effect.tap((envelope) =>
-          envelope.contractVersion !== SAZED_CONTRACT_VERSION
-            ? Effect.logWarning(
-                `Sazed contract version mismatch: expected ${SAZED_CONTRACT_VERSION}, got ${envelope.contractVersion}`,
+        Effect.tap((envelope) => {
+          const compat = checkVersionCompat(
+            SAZED_CONTRACT_VERSION,
+            envelope.contractVersion,
+          )
+          return compat === "major-mismatch"
+            ? Effect.fail(
+                new SazedError({
+                  message: `Incompatible Sazed contract version: expected ${SAZED_CONTRACT_VERSION}, got ${envelope.contractVersion}`,
+                }),
               )
-            : Effect.void,
-        ),
+            : compat === "minor-drift"
+              ? Effect.logWarning(
+                  `Sazed contract version drift: expected ${SAZED_CONTRACT_VERSION}, got ${envelope.contractVersion}`,
+                )
+              : Effect.void
+        }),
         Effect.map((envelope) => envelope.data),
         Effect.mapError(
           (e) =>
@@ -493,10 +504,7 @@ export class HoidService extends Context.Tag("@dalinar/HoidService")<
 >() {}
 
 function resolveHoidRoot(): string {
-  return (
-    process.env.HOID_ROOT ??
-    resolve(process.env.DALINAR_ROOT ?? process.cwd(), "modules/hoid")
-  )
+  return process.env.HOID_ROOT ?? resolve(resolveDalinarRoot(), "modules/hoid")
 }
 
 function hoidCliScript(name: string): string {
