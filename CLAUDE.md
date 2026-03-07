@@ -1,10 +1,10 @@
 # Dalinar
 
-Dalinar orchestrates Jasnah (memory) and Sazed (planning) for AI-augmented development.
+Bun monorepo. Orchestrates Jasnah (memory), Sazed (planning), and Hoid (calendar).
 
 ## Before Starting Work
 
-1. Search memories for prior context on the area you're working in:
+1. Search memories for prior context:
    ```bash
    JASNAH="${JASNAH_ROOT:-${XDG_DATA_HOME:-$HOME/.local/share}/jasnah}"
    bun run "$JASNAH/scripts/search-memory.ts" "<relevant query>"
@@ -25,6 +25,8 @@ Dalinar orchestrates Jasnah (memory) and Sazed (planning) for AI-augmented devel
 
 ## Orchestrator Pipelines
 
+6 pipelines, each with legacy async + Effect.ts version (Effect tried first, falls back to legacy).
+
 - **analyze-with-context**: `bun run packages/orchestrator/src/analyze-with-context.ts EPIC-XXX [--force] [--notes]`
   Searches Jasnah → runs Sazed analysis → extracts knowledge back → vault sync
 
@@ -43,27 +45,17 @@ Dalinar orchestrates Jasnah (memory) and Sazed (planning) for AI-augmented devel
 - **vault-sync**: `bun run packages/orchestrator/src/vault-sync.ts [project-root]`
   Sync .memory/ to Obsidian vault Work Log folder (opt-in via `WORK_LOG_PATH`)
 
-## Skills Available
-
-- **jasnah-debug-trace**: Structured debugging with trace utilities (Agans' 9 Rules)
-- **jasnah-query**: Database querying via psql
-- **jasnah-search-memory**: Semantic memory search
-- **using-git-worktrees**: Workspace isolation for feature work
-- **jira**: Full ticket lifecycle (fetch → implement → PR → comment)
-- **dialectic**: Adversarial reasoning for architectural decisions (see skills/dialectic/)
-
 ## Architecture
 
-- `packages/protocol/` — Shared types, retention math, secret filtering, vault config
-- `packages/orchestrator/` — Cross-system pipelines (analyze-with-context, implement-ticket, vault-sync)
-  - `src/effect/` — Effect.ts typed pipeline layer (see `packages/orchestrator/MIGRATION.md`)
+- `packages/protocol/` — Shared types, retention math, secret detection, taxonomy, frontmatter, vault config
+- `packages/orchestrator/` — 6 cross-system pipelines (legacy + Effect.ts)
+  - `src/effect/` — Typed pipeline layer (services, errors, ticket state machine, WAL, context snapshots)
 - `modules/jasnah/` — Memory extraction and retrieval (git submodule)
 - `modules/sazed/` — Epic analysis and task decomposition (git submodule)
-- `skills/` — Cross-project skills (worktrees, jira, dialectic)
+- `modules/hoid/` — Calendar operations (git submodule)
+- `skills/` — 11 agent skills (local + symlinks into submodules)
 
 ### Effect.ts Layer (packages/orchestrator/src/effect/)
-
-All 6 orchestrator pipelines have Effect.ts versions with typed errors, injectable services, and test layers. CLI entrypoints try the Effect pipeline first with a fallback to the original async function.
 
 - **Services**: `JasnahService`, `SazedService`, `HoidService` — Context.Tag services wrapping subprocess calls
 - **Errors**: `Schema.TaggedError` types — `SubprocessError`, `JasnahError`, `SazedError`, `VaultSyncError`, `FileOperationError`, `TicketStateError`, `ParseError`, `HoidError`
@@ -73,6 +65,23 @@ All 6 orchestrator pipelines have Effect.ts versions with typed errors, injectab
 - **Context snapshots**: Schema.Class types + SHA-256 content hashing + Ref-based caching
 
 Tests: `bun test packages/orchestrator/src/effect/`
+
+## Skills
+
+| Skill | Source | Description |
+|-------|--------|-------------|
+| `calendar` | local | Unified calendar operations |
+| `dialectic` | local | Adversarial reasoning for decisions |
+| `jira` | local | Full ticket lifecycle (fetch → implement → PR → comment) |
+| `reducing-entropy` | local | Codebase size minimization |
+| `using-git-worktrees` | local | Workspace isolation for feature work |
+| `gsap-react` | hoid | GSAP + React animation patterns |
+| `image-to-webp` | hoid | Image conversion via cwebp |
+| `sanity-tools` | hoid | Sanity CMS operations |
+| `jasnah-debug-trace` | jasnah | Structured debugging (Agans' 9 Rules) |
+| `jasnah-export-memory` | jasnah | Transcript-based memory export |
+| `jasnah-query` | jasnah | Database querying via psql |
+| `jasnah-search-memory` | jasnah | Semantic memory search |
 
 ## Conventions
 
