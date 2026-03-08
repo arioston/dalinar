@@ -17,7 +17,21 @@ SAZED_DIR="${SCRIPT_DIR}/modules/sazed"
 HOID_DIR="${SCRIPT_DIR}/modules/hoid"
 HOID_SKILLS_DIR="${HOID_DIR}/packages/skills"
 MEMORY_DIR="${SCRIPT_DIR}/.memory"
-HOID_GLOBAL_SKILLS=(gsap-react image-to-webp sanity-tools)
+
+# All Hoid skills to link into the project
+HOID_ALL_SKILLS=(adversarial-review gsap-react image-to-webp k8s-audit meditate refine ruminate sanity-tools)
+
+# All skills that should be available globally (all project skills)
+GLOBAL_SKILLS_LIST=(
+  calendar dialectic jira reducing-entropy using-git-worktrees
+  jasnah-debug-trace jasnah-query jasnah-search-memory jasnah-export-memory
+  "${HOID_ALL_SKILLS[@]}"
+)
+
+# Global skill directories for each agent platform
+CLAUDE_SKILLS_DIR="${CLAUDE_GLOBAL}/skills"
+OPENCODE_SKILLS_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/opencode/skills"
+CODEX_SKILLS_DIR="${HOME}/.agents/skills"
 
 ok()   { echo "  [ok] $1"; }
 skip() { echo "  [skip] $1 (already exists)"; }
@@ -102,20 +116,8 @@ install_ripgrep
 
 info "Setting up Jasnah memory pack"
 
-# Create .memory directories
-for dir in decisions insights facts architecture domain-facts api-contracts glossary lessons-learned locks; do
-  mkdir -p "${MEMORY_DIR}/${dir}"
-done
-ok ".memory directories created"
-
-# Copy config template if not present
-CONFIG_FILE="${MEMORY_DIR}/config.yaml"
-if [ ! -f "$CONFIG_FILE" ]; then
-  cp "${JASNAH_DIR}/config/config.yaml.template" "$CONFIG_FILE"
-  ok "Memory config created at ${CONFIG_FILE}"
-else
-  skip "Memory config ${CONFIG_FILE}"
-fi
+"${JASNAH_DIR}/install.sh" --project "$SCRIPT_DIR"
+ok "Jasnah install complete"
 
 # ── 4. LanceDB vector store ────────────────────────────────────
 
@@ -168,27 +170,45 @@ for skill in jasnah-debug-trace jasnah-query jasnah-search-memory jasnah-export-
   fi
 done
 
-for skill in "${HOID_GLOBAL_SKILLS[@]}"; do
+# Hoid skills -> dalinar/skills/ (all skills, not just a subset)
+for skill in "${HOID_ALL_SKILLS[@]}"; do
   if [ -d "${HOID_SKILLS_DIR}/${skill}" ] && [ -f "${HOID_SKILLS_DIR}/${skill}/SKILL.md" ]; then
     symlink_or_replace "../modules/hoid/packages/skills/${skill}" "${SKILLS_DIR}/${skill}"
   fi
 done
 
-# ── 7. Global Claude Code skills (~/.claude/skills/) ──────────
+# ── 7. Global skills (Claude Code + OpenCode + Codex) ──────────
 
-info "Linking global Claude Code skills"
+info "Linking global skills (Claude Code, OpenCode, Codex)"
 
-GLOBAL_SKILLS="${CLAUDE_GLOBAL}/skills"
-mkdir -p "$GLOBAL_SKILLS"
+mkdir -p "$CLAUDE_SKILLS_DIR" "$OPENCODE_SKILLS_DIR" "$CODEX_SKILLS_DIR"
 
-# Dalinar-owned skills that should be available globally
-for skill in calendar dialectic jira "${HOID_GLOBAL_SKILLS[@]}"; do
+for skill in "${GLOBAL_SKILLS_LIST[@]}"; do
   if [ -d "${SKILLS_DIR}/${skill}" ]; then
-    symlink_or_replace "${SKILLS_DIR}/${skill}" "${GLOBAL_SKILLS}/${skill}"
+    symlink_or_replace "${SKILLS_DIR}/${skill}" "${CLAUDE_SKILLS_DIR}/${skill}"
+    symlink_or_replace "${SKILLS_DIR}/${skill}" "${OPENCODE_SKILLS_DIR}/${skill}"
+    symlink_or_replace "${SKILLS_DIR}/${skill}" "${CODEX_SKILLS_DIR}/${skill}"
   fi
 done
 
-# ── 8. Claude Code agents ─────────────────────────────────────
+ok "Skills available globally for Claude Code, OpenCode, and Codex"
+
+# ── 8. Hoid calendar config ───────────────────────────────────
+
+info "Setting up Hoid"
+
+HOID_CONFIG_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/hoid"
+HOID_CONFIG="${HOID_CONFIG_DIR}/hoid.config.json"
+
+if [ ! -f "$HOID_CONFIG" ]; then
+  mkdir -p "$HOID_CONFIG_DIR"
+  cp "${HOID_DIR}/config/hoid.config.example.json" "$HOID_CONFIG"
+  ok "Created ${HOID_CONFIG} from example — edit with your account details"
+else
+  skip "Hoid config ${HOID_CONFIG}"
+fi
+
+# ── 9. Claude Code agents ─────────────────────────────────────
 
 info "Setting up Claude Code agents"
 
@@ -200,7 +220,7 @@ else
   ok "Agent: effect-idiomatic-critic (already in repo)"
 fi
 
-# ── 9. Claude Code hooks ──────────────────────────────────────
+# ── 10. Claude Code hooks ──────────────────────────────────────
 
 info "Checking Claude Code hooks"
 
@@ -214,7 +234,7 @@ else
   echo "         Copy from your HoldGate project if you want session logging."
 fi
 
-# ── 10. Environment file ──────────────────────────────────────
+# ── 11. Environment file ──────────────────────────────────────
 
 info "Checking environment files"
 
@@ -276,21 +296,6 @@ else
   skip "Sazed .env"
 fi
 
-# ── 11. Hoid calendar config ─────────────────────────────────
-
-info "Checking Hoid calendar config"
-
-HOID_CONFIG_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/hoid"
-HOID_CONFIG="${HOID_CONFIG_DIR}/hoid.config.json"
-
-if [ ! -f "$HOID_CONFIG" ]; then
-  mkdir -p "$HOID_CONFIG_DIR"
-  cp "${HOID_DIR}/config/hoid.config.example.json" "$HOID_CONFIG"
-  ok "Created ${HOID_CONFIG} from example — edit with your account details"
-else
-  skip "Hoid config ${HOID_CONFIG}"
-fi
-
 # ── 12. JASNAH_ROOT export hint ───────────────────────────────
 
 info "Environment variable hints"
@@ -311,7 +316,7 @@ echo ""
 echo "  Next steps:"
 echo "    1. Edit .env with your API keys (ANTHROPIC_API_KEY, JIRA_*, etc.)"
 echo "    2. For GitHub Copilot LLM: bunx @mariozechner/pi-ai login github-copilot"
-echo "    3. For Google Calendar:    ./modules/hoid/install.sh"
+echo "    3. For Google Calendar:    ./modules/hoid/install.sh calendar"
 echo "    4. Edit ${HOID_CONFIG} with your calendar accounts"
 echo "    5. Add 'export JASNAH_ROOT=${JASNAH_DIR}' to your shell profile"
 echo ""
