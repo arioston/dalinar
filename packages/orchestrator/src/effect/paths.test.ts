@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test"
 import { Effect } from "effect"
+import { NodeFileSystem } from "@effect/platform-node"
 import {
   assertNotDist,
   resolveDalinarRoot,
@@ -88,7 +89,9 @@ describe("path resolvers", () => {
 
 describe("preflight", () => {
   test("returns check results for all scripts", async () => {
-    const result = await Effect.runPromise(preflight)
+    const result = await Effect.runPromise(
+      preflight.pipe(Effect.provide(NodeFileSystem.layer)),
+    )
     expect(result.checks).toHaveLength(4)
     for (const check of result.checks) {
       expect(check).toHaveProperty("name")
@@ -98,7 +101,9 @@ describe("preflight", () => {
   })
 
   test("returns root path", async () => {
-    const result = await Effect.runPromise(preflight)
+    const result = await Effect.runPromise(
+      preflight.pipe(Effect.provide(NodeFileSystem.layer)),
+    )
     expect(typeof result.root).toBe("string")
     expect(result.root.length).toBeGreaterThan(0)
   })

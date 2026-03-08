@@ -46,14 +46,19 @@ export function extractJsonEnvelope(raw: string): string {
     try { JSON.parse(trimmed); return trimmed } catch { /* fall through */ }
   }
 
-  // Scan for each potential JSON start
+  // Scan for each potential JSON start — reaching here means
+  // the subprocess emitted non-JSON content mixed with its output.
   for (let pos = 0; pos < trimmed.length; pos++) {
     const ch = trimmed[pos]
     if (ch !== "{" && ch !== "[") continue
 
     const candidate = extractBalanced(trimmed, pos)
     if (candidate !== null) {
-      try { JSON.parse(candidate); return candidate } catch { /* try next */ }
+      try {
+        JSON.parse(candidate)
+        console.warn("[extractJsonEnvelope] Subprocess emitted non-JSON prefix before JSON payload — consider fixing the upstream --json output")
+        return candidate
+      } catch { /* try next */ }
     }
   }
 
@@ -91,16 +96,18 @@ export const SazedEnvelope = <A extends Schema.Schema.AnyNoContext>(dataSchema: 
 
 // ── Jasnah Service ─────────────────────────────────────────────────
 
-export interface MemorySearchResult {
-  memory_id: string
-  type: string
-  summary: string
-  content: string
-  tags: string[]
-  confidence: string
-  score: number
-  retention: number
-}
+export const MemorySearchResultSchema = Schema.Struct({
+  memory_id: Schema.String,
+  type: Schema.String,
+  summary: Schema.String,
+  content: Schema.String,
+  tags: Schema.Array(Schema.String),
+  confidence: Schema.String,
+  score: Schema.Number,
+  retention: Schema.Number,
+})
+
+export interface MemorySearchResult extends Schema.Schema.Type<typeof MemorySearchResultSchema> {}
 
 export interface SearchOptions {
   query: string
@@ -141,13 +148,18 @@ export class JasnahService extends Context.Tag("@dalinar/JasnahService")<
 >() {}
 
 
+const MemorySearchResultArray = Schema.Array(MemorySearchResultSchema)
+
 function parseSearchOutput(stdout: string): MemorySearchResult[] {
   if (!stdout) return []
   try {
     const parsed = JSON.parse(stdout)
-    if (Array.isArray(parsed)) return parsed
+    if (Array.isArray(parsed)) {
+      const decoded = Schema.decodeUnknownSync(MemorySearchResultArray)(parsed)
+      return decoded as MemorySearchResult[]
+    }
   } catch {
-    // Output is human-readable text
+    // Output is human-readable text or failed schema validation
   }
   return [
     {

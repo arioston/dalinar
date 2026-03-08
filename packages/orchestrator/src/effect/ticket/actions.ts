@@ -1,3 +1,5 @@
+import { Data } from "effect"
+
 export type TicketAction =
   | ClaimAction
   | StartProgressAction
@@ -31,3 +33,10 @@ export interface UnblockAction {
 export interface ReleaseAction {
   readonly _tag: "ReleaseAction"
 }
+
+export const ClaimAction = Data.tagged<ClaimAction>("ClaimAction")
+export const StartProgressAction = Data.tagged<StartProgressAction>("StartProgressAction")
+export const CompleteAction = Data.tagged<CompleteAction>("CompleteAction")
+export const BlockAction = Data.tagged<BlockAction>("BlockAction")
+export const UnblockAction = Data.tagged<UnblockAction>("UnblockAction")
+export const ReleaseAction = Data.tagged<ReleaseAction>("ReleaseAction")

@@ -83,6 +83,7 @@ export const runCli = (
 
   const withChecks = Effect.all([
     preflight.pipe(
+      Effect.provide(PreflightLayer),
       Effect.catchAll((e) => Effect.logWarning(`Preflight failed: ${e}`)),
     ),
     doctorCheck,

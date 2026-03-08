@@ -1,6 +1,6 @@
 import { Clock, Effect } from "effect"
+import { FileSystem } from "@effect/platform"
 import { resolve, basename } from "path"
-import { readdir, readFile, access } from "fs/promises"
 import { parseFrontmatter } from "@dalinar/protocol"
 import { JasnahService, type ExtractEntry } from "../services.js"
 
@@ -327,63 +327,55 @@ export function formatReport(report: AuditReport): string {
 // ── Memory loading (Effect-wrapped I/O) ────────────────────────────
 
 const discoverMemoryRoots = (basePath: string) =>
-  Effect.tryPromise(async () => {
-    const results: { root: string; project: string }[] = []
-    let topLevel: string[]
-    try {
-      topLevel = await readdir(basePath)
-    } catch {
-      return results
-    }
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem
+    const topLevel = yield* fs.readDirectory(basePath).pipe(
+      Effect.catchAll(() => Effect.succeed([] as string[])),
+    )
 
-    for (const entry of topLevel) {
-      const candidateMemory = resolve(basePath, entry, ".memory")
-      try {
-        await access(candidateMemory)
-        results.push({ root: resolve(basePath, entry), project: entry })
-      } catch {
-        // No .memory dir here
-      }
-    }
-    return results
+    return yield* Effect.filter(
+      topLevel.map((entry) => ({ root: resolve(basePath, entry), project: entry })),
+      ({ root }) => fs.exists(resolve(root, ".memory")).pipe(
+        Effect.catchAll(() => Effect.succeed(false)),
+      ),
+    )
   }).pipe(Effect.orElseSucceed(() => [] as { root: string; project: string }[]))
 
 const loadMemoriesFromRoot = (root: string, project?: string) =>
-  Effect.tryPromise(async () => {
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem
     const memoryRoot = resolve(root, ".memory")
     const entries: MemoryEntry[] = []
 
     for (const dir of MEMORY_DIRS) {
       const dirPath = resolve(memoryRoot, dir)
-      let files: string[]
-      try {
-        files = await readdir(dirPath)
-      } catch {
-        continue
-      }
+      const files = yield* fs.readDirectory(dirPath).pipe(
+        Effect.catchAll(() => Effect.succeed([] as string[])),
+      )
 
       for (const file of files) {
         if (!file.endsWith(".md")) continue
-        try {
-          const raw = await readFile(resolve(dirPath, file), "utf-8")
-          const { frontmatter, content } = parseFrontmatter(raw)
-          entries.push({
-            id: (frontmatter.id as string) ?? basename(file, ".md"),
-            type: (frontmatter.type as string) ?? dir,
-            summary:
-              (frontmatter.summary as string) || extractFirstLine(content),
-            content,
-            tags: Array.isArray(frontmatter.tags)
-              ? (frontmatter.tags as string[])
-              : [],
-            confidence: (frontmatter.confidence as string) ?? "medium",
-            createdAt: frontmatter.createdAt as string | undefined,
-            source: frontmatter.source as string | undefined,
-            project,
-          })
-        } catch {
-          // Skip malformed files
-        }
+        const entry = yield* fs.readFileString(resolve(dirPath, file)).pipe(
+          Effect.map((raw) => {
+            const { frontmatter, content } = parseFrontmatter(raw)
+            return {
+              id: (frontmatter.id as string) ?? basename(file, ".md"),
+              type: (frontmatter.type as string) ?? dir,
+              summary:
+                (frontmatter.summary as string) || extractFirstLine(content),
+              content,
+              tags: Array.isArray(frontmatter.tags)
+                ? (frontmatter.tags as string[])
+                : [],
+              confidence: (frontmatter.confidence as string) ?? "medium",
+              createdAt: frontmatter.createdAt as string | undefined,
+              source: frontmatter.source as string | undefined,
+              project,
+            } satisfies MemoryEntry
+          }),
+          Effect.catchAll(() => Effect.succeed(null)),
+        )
+        if (entry) entries.push(entry)
       }
     }
     return entries

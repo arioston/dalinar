@@ -10,7 +10,7 @@
  * for CLI boot checks (interruption-safe, testable via mock layer).
  */
 
-import { Config, Effect, Ref, Schema } from "effect"
+import { Config, Effect, Schema } from "effect"
 import { FileSystem } from "@effect/platform"
 import { ConfigurationError } from "./errors.js"
 import { SubprocessService } from "./subprocess.js"
@@ -55,10 +55,10 @@ export const doctor = Effect.gen(function* () {
   const model = yield* LlmModel
   const fs = yield* FileSystem.FileSystem
   const subprocess = yield* SubprocessService
-  const remediations = yield* Ref.make<string[]>([])
+  const remediations: string[] = []
 
   const addRemediation = (msg: string) =>
-    Ref.update(remediations, (arr) => [...arr, msg])
+    Effect.sync(() => { remediations.push(msg) })
 
   // Validate model/provider
   const validation = validateModelConfig(provider, model)
@@ -151,11 +151,9 @@ export const doctor = Effect.gen(function* () {
     )
   }
 
-  const finalRemediations = yield* Ref.get(remediations)
-
-  if (finalRemediations.length > 0) {
+  if (remediations.length > 0) {
     yield* Effect.logWarning(
-      `Doctor found ${finalRemediations.length} issue(s):\n${finalRemediations.map((r, i) => `  ${i + 1}. ${r}`).join("\n")}`,
+      `Doctor found ${remediations.length} issue(s):\n${remediations.map((r, i) => `  ${i + 1}. ${r}`).join("\n")}`,
     )
   }
 
@@ -167,6 +165,6 @@ export const doctor = Effect.gen(function* () {
     sazedCliBootable,
     sazedCliVersion,
     compatibilityIssues: compat.issues,
-    remediations: finalRemediations,
+    remediations,
   } satisfies DoctorReport
 })

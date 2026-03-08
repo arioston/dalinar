@@ -1,5 +1,5 @@
 import { Effect } from "effect"
-import { access } from "fs/promises"
+import { FileSystem } from "@effect/platform"
 import { resolve } from "path"
 import { FileOperationError } from "./errors.js"
 
@@ -75,6 +75,7 @@ export interface PreflightCheck {
 
 export const preflight = Effect.gen(function* () {
   const root = resolveDalinarRoot()
+  const fs = yield* FileSystem.FileSystem
 
   const checks = [
     { name: "jasnah-search", path: resolveJasnahScript("search-memory.ts") },
@@ -87,13 +88,12 @@ export const preflight = Effect.gen(function* () {
   yield* Effect.forEach(checks, (check) => assertNotDist(check.path))
 
   const results = yield* Effect.forEach(checks, (check) =>
-    Effect.tryPromise(() => access(check.path))
-      .pipe(
-        Effect.map((): PreflightCheck => ({ ...check, ok: true })),
-        Effect.catchAll(() =>
-          Effect.succeed<PreflightCheck>({ ...check, ok: false }),
-        ),
+    fs.exists(check.path).pipe(
+      Effect.map((ok): PreflightCheck => ({ ...check, ok })),
+      Effect.catchAll(() =>
+        Effect.succeed<PreflightCheck>({ ...check, ok: false }),
       ),
+    ),
   )
 
   const missing = results.filter((r) => !r.ok)

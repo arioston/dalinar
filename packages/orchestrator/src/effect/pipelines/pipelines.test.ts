@@ -1,6 +1,8 @@
 import { describe, expect, test } from "bun:test"
 import { Effect, Layer } from "effect"
+import { NodeFileSystem } from "@effect/platform-node"
 import { JasnahService, SazedService, type JasnahServiceShape, type SazedServiceShape } from "../services.js"
+import { SubprocessService } from "../subprocess.js"
 import { SazedError } from "../errors.js"
 import { SazedAnalyzeOutput, SazedSyncOutput, SazedStatusOutput, SazedNotesListOutput } from "@dalinar/protocol"
 import { reflectPipeline, reflectionToMemories } from "./reflect.js"
@@ -48,8 +50,13 @@ const FailingSazed = Layer.succeed(SazedService, {
   searchNotes: () => Effect.fail(new SazedError({ message: "search failed" })),
 } satisfies SazedServiceShape)
 
-const TestLayer = Layer.mergeAll(TestJasnah, TestSazed)
-const FailLayer = Layer.mergeAll(TestJasnah, FailingSazed)
+const TestSubprocess = Layer.succeed(SubprocessService, {
+  run: () =>
+    Effect.succeed({ stdout: "", stderr: "", exitCode: 0, timedOut: false }),
+})
+
+const TestLayer = Layer.mergeAll(TestJasnah, TestSazed, TestSubprocess)
+const FailLayer = Layer.mergeAll(TestJasnah, FailingSazed, TestSubprocess)
 
 // ── reflect ───────────────────────────────────────────────────────
 
@@ -359,7 +366,7 @@ describe("auditPipeline", () => {
   test("runs on empty memory root without error", async () => {
     const result = await Effect.runPromise(
       auditPipeline("/tmp/nonexistent-audit-test").pipe(
-        Effect.provide(TestJasnah),
+        Effect.provide(Layer.mergeAll(TestJasnah, NodeFileSystem.layer)),
       ),
     )
 

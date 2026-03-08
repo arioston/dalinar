@@ -1,7 +1,6 @@
 import { Effect } from "effect"
-import { $ } from "bun"
 import { JasnahService, SazedService, type ExtractEntry } from "../services.js"
-import { SubprocessError } from "../errors.js"
+import { SubprocessService } from "../subprocess.js"
 
 export interface ImplementOptions {
   ticketKey: string
@@ -20,42 +19,26 @@ export interface ImplementationContext {
 
 const createWorktree = (ticketKey: string, root: string) =>
   Effect.gen(function* () {
+    const subprocess = yield* SubprocessService
     const branch = `feat/${ticketKey.toLowerCase()}`
     const worktreePath = `${root}/.worktrees/${ticketKey.toLowerCase()}`
 
-    const result = yield* Effect.tryPromise({
-      try: () =>
-        $`git worktree add -b ${branch} ${worktreePath}`
-          .cwd(root)
-          .quiet()
-          .nothrow()
-          .then((r) => ({
-            exitCode: r.exitCode,
-            stderr: r.stderr.toString().trim(),
-          })),
-      catch: (error) =>
-        new SubprocessError({
-          message: "Failed to create worktree",
-          command: "git worktree add",
-          cause: error,
-        }),
+    const result = yield* subprocess.run("git", {
+      args: ["worktree", "add", "-b", branch, worktreePath],
+      rawCommand: true,
+      cwd: root,
+      nothrow: true,
+      timeout: "30 seconds",
     })
 
     if (result.exitCode !== 0) {
       if (result.stderr.includes("already exists")) {
-        const retry = yield* Effect.tryPromise({
-          try: () =>
-            $`git worktree add ${worktreePath} ${branch}`
-              .cwd(root)
-              .quiet()
-              .nothrow()
-              .then((r) => ({ exitCode: r.exitCode })),
-          catch: (error) =>
-            new SubprocessError({
-              message: "Failed to create worktree (retry)",
-              command: "git worktree add",
-              cause: error,
-            }),
+        const retry = yield* subprocess.run("git", {
+          args: ["worktree", "add", worktreePath, branch],
+          rawCommand: true,
+          cwd: root,
+          nothrow: true,
+          timeout: "30 seconds",
         })
         if (retry.exitCode === 0) {
           return { path: worktreePath, branch }

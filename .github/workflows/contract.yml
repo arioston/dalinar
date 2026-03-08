@@ -1,0 +1,26 @@
+name: Live Contract Tests
+
+on:
+  workflow_dispatch: # manual trigger only
+
+jobs:
+  contract:
+    name: Sazed Live Contract
+    runs-on: ubuntu-latest
+    environment: live-tests
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+      - run: bun install --frozen-lockfile
+      - run: bun run ci:preflight --strict
+      - name: Run live contract tests
+        env:
+          RUN_EXTERNAL_TESTS: "1"
+          LLM_PROVIDER: ${{ secrets.LLM_PROVIDER }}
+          LLM_MODEL: ${{ secrets.LLM_MODEL }}
+          LLM_API_KEY: ${{ secrets.LLM_API_KEY }}
+        run: bun run ci:contract

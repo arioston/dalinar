@@ -1,8 +1,8 @@
 import { Effect } from "effect"
-import { $ } from "bun"
 import { resolve } from "path"
 import { resolveVaultConfig, vaultProjectPath } from "@dalinar/protocol"
 import { VaultSyncError } from "../errors.js"
+import { SubprocessService } from "../subprocess.js"
 import { resolveDalinarRoot } from "../paths.js"
 
 export interface VaultSyncResult {
@@ -26,25 +26,23 @@ export const vaultSyncPipeline = (
       } satisfies VaultSyncResult
     }
 
+    const subprocess = yield* SubprocessService
     const root = projectRoot ?? process.cwd()
     const scriptPath = resolve(resolveDalinarRoot(), "scripts/vault-sync.sh")
 
-    const result = yield* Effect.tryPromise({
-      try: () =>
-        $`bash ${scriptPath} ${root}`
-          .quiet()
-          .nothrow()
-          .env({ ...process.env, WORK_LOG_PATH: config.workLogPath })
-          .then((r) => ({
-            exitCode: r.exitCode,
-            stderr: r.stderr.toString().trim(),
-          })),
-      catch: (error) =>
-        new VaultSyncError({
-          message: "Vault sync script failed",
-          cause: error,
-        }),
-    })
+    const result = yield* subprocess
+      .run("bash", {
+        args: [scriptPath, root],
+        rawCommand: true,
+        nothrow: true,
+        timeout: "30 seconds",
+        env: { WORK_LOG_PATH: config.workLogPath },
+      })
+      .pipe(
+        Effect.mapError(
+          (e) => new VaultSyncError({ message: "Vault sync script failed", cause: e }),
+        ),
+      )
 
     if (result.exitCode !== 0) {
       return {
@@ -68,6 +66,7 @@ export const initWorkLogPipeline = (
       return { created: false, reason: "WORK_LOG_PATH not set" }
     }
 
+    const subprocess = yield* SubprocessService
     const globalDirs = [
       "architecture",
       "domain-facts",
@@ -77,17 +76,18 @@ export const initWorkLogPipeline = (
     ]
 
     for (const dir of globalDirs) {
-      yield* Effect.tryPromise({
-        try: () =>
-          $`mkdir -p ${config.workLogPath}/_global/${dir}`.quiet().then(
-            () => undefined,
+      yield* subprocess
+        .run("mkdir", {
+          args: ["-p", `${config.workLogPath}/_global/${dir}`],
+          rawCommand: true,
+          nothrow: true,
+          timeout: "10 seconds",
+        })
+        .pipe(
+          Effect.mapError(
+            (e) => new VaultSyncError({ message: `Failed to create directory: ${dir}`, cause: e }),
           ),
-        catch: (error) =>
-          new VaultSyncError({
-            message: `Failed to create directory: ${dir}`,
-            cause: error,
-          }),
-      })
+        )
     }
 
     return { created: true, path: config.workLogPath }

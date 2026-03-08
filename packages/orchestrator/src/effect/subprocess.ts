@@ -16,6 +16,8 @@ export interface SubprocessRunOptions {
   readonly stdin?: string | undefined
   readonly timeout?: Duration.DurationInput | undefined
   readonly retryPolicy?: Schedule.Schedule<unknown, unknown> | undefined
+  /** When true, run `command` directly instead of wrapping with `bun run`. */
+  readonly rawCommand?: boolean | undefined
 }
 
 export type SubprocessErrorCategory =
@@ -53,39 +55,43 @@ const DEFAULT_TIMEOUT = Duration.seconds(30)
 
 export const SubprocessServiceLive = Layer.succeed(SubprocessService, {
   run: (command, opts) => {
-    const execute = Effect.tryPromise({
-      try: async () => {
-        const cmd = ["bun", "run", command, ...(opts.args as string[])]
-        const spawnOpts: Parameters<typeof Bun.spawn>[1] = {
-          env: opts.env ? { ...process.env, ...opts.env } : process.env,
-          stdin: opts.stdin !== undefined ? new Blob([opts.stdin]) : "ignore",
-          stdout: "pipe",
-          stderr: "pipe",
-        }
-        if (opts.cwd) spawnOpts.cwd = opts.cwd
-        const proc = Bun.spawn(cmd, spawnOpts)
+    const cmd = opts.rawCommand
+      ? [command, ...(opts.args as string[])]
+      : ["bun", "run", command, ...(opts.args as string[])]
 
-        const [stdout, stderr] = await Promise.all([
-          new Response(proc.stdout as ReadableStream).text(),
-          new Response(proc.stderr as ReadableStream).text(),
-        ])
+    const execute = Effect.async<SubprocessResult, SubprocessError>((resume, signal) => {
+      const spawnOpts: Parameters<typeof Bun.spawn>[1] = {
+        env: opts.env ? { ...process.env, ...opts.env } : process.env,
+        stdin: opts.stdin !== undefined ? new Blob([opts.stdin]) : "ignore",
+        stdout: "pipe",
+        stderr: "pipe",
+      }
+      if (opts.cwd) spawnOpts.cwd = opts.cwd
+      const proc = Bun.spawn(cmd, spawnOpts)
 
-        const exitCode = await proc.exited
+      // Kill child process on fiber interruption
+      signal.addEventListener("abort", () => { proc.kill() })
 
-        return {
-          stdout: stdout.trim(),
-          stderr: stderr.trim(),
-          exitCode,
-          timedOut: false,
-        }
-      },
-      catch: (error) =>
-        new SubprocessError({
-          message: `Command failed: ${command}`,
-          command,
-          category: "unknown",
-          cause: error,
-        }),
+      Promise.all([
+        new Response(proc.stdout as ReadableStream).text(),
+        new Response(proc.stderr as ReadableStream).text(),
+        proc.exited,
+      ]).then(
+        ([stdout, stderr, exitCode]) =>
+          resume(Effect.succeed({
+            stdout: stdout.trim(),
+            stderr: stderr.trim(),
+            exitCode,
+            timedOut: false,
+          })),
+        (error) =>
+          resume(Effect.fail(new SubprocessError({
+            message: `Command failed: ${command}`,
+            command,
+            category: "unknown",
+            cause: error,
+          }))),
+      )
     }).pipe(
       Effect.flatMap((result) =>
         !opts.nothrow && result.exitCode !== 0
