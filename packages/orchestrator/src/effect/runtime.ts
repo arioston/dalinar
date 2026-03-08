@@ -28,6 +28,13 @@ export const OrchestratorLive = Layer.mergeAll(
   Layer.provideMerge(NodeFileSystem.layer),
 )
 
+// ── Shared base layer for preflight checks ────────────────────────
+
+const PreflightLayer = Layer.mergeAll(
+  SubprocessServiceLive,
+  NodeFileSystem.layer,
+)
+
 // ── CLI runner ─────────────────────────────────────────────────────
 
 export type OrchestratorError =
@@ -65,13 +72,13 @@ export const runCli = (
   effect: Effect.Effect<void, OrchestratorError, never>,
 ): void => {
   const doctorCheck = doctor.pipe(
-    Effect.provide(NodeFileSystem.layer),
-    Effect.catchAll((e) => {
-      if ("_tag" in e && e._tag === "ConfigurationError") {
-        return Effect.fail(e as unknown as OrchestratorError)
-      }
-      return Effect.logWarning(`Doctor check failed: ${String(e)}`)
-    }),
+    Effect.provide(PreflightLayer),
+    Effect.catchTag("ConfigurationError", (e) =>
+      Effect.fail(e as OrchestratorError),
+    ),
+    Effect.catchAll((e) =>
+      Effect.logWarning(`Doctor check failed: ${String(e)}`),
+    ),
   )
 
   const withChecks = Effect.all([
@@ -83,15 +90,20 @@ export const runCli = (
 
   Effect.runPromise(
     withChecks.pipe(
+      Effect.tapError((error) =>
+        Effect.logError(`[dalinar] ${error._tag}: ${error.message}`),
+      ),
       Effect.catchAll((error) =>
         Effect.sync(() => {
-          console.error(`[dalinar] ${error._tag}: ${error.message}`)
           process.exitCode = exitCodeForError(error)
         }),
       ),
+      Effect.catchAllDefect((defect) =>
+        Effect.sync(() => {
+          console.error("[dalinar] Unexpected error:", defect)
+          process.exitCode = 1
+        }),
+      ),
     ),
-  ).catch((defect) => {
-    console.error("[dalinar] Unexpected error:", defect)
-    process.exitCode = 1
-  })
+  )
 }

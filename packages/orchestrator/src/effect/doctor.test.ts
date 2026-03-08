@@ -1,7 +1,8 @@
 import { describe, expect, test } from "bun:test"
-import { Effect } from "effect"
+import { Effect, Layer } from "effect"
 import { NodeFileSystem } from "@effect/platform-node"
 import { doctor } from "./doctor.js"
+import { SubprocessServiceLive } from "./subprocess.js"
 import {
   validateModelConfig,
   formatModelRemediationMessage,
@@ -10,7 +11,8 @@ import {
   DEFAULT_MODEL,
 } from "@dalinar/protocol"
 
-const runDoctor = doctor.pipe(Effect.provide(NodeFileSystem.layer))
+const DoctorLayer = Layer.mergeAll(SubprocessServiceLive, NodeFileSystem.layer)
+const runDoctor = doctor.pipe(Effect.provide(DoctorLayer))
 
 describe("doctor", () => {
   test("succeeds with current config", async () => {
@@ -26,6 +28,16 @@ describe("doctor", () => {
   test("reports compatibility issues as array", async () => {
     const result = await Effect.runPromise(runDoctor)
     expect(Array.isArray(result.compatibilityIssues)).toBe(true)
+  })
+
+  test("reports sazedCliBootable field", async () => {
+    const result = await Effect.runPromise(runDoctor)
+    expect(typeof result.sazedCliBootable).toBe("boolean")
+  })
+
+  test("reports remediations as array", async () => {
+    const result = await Effect.runPromise(runDoctor)
+    expect(Array.isArray(result.remediations)).toBe(true)
   })
 })
 

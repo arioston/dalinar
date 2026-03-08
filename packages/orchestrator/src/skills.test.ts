@@ -15,6 +15,7 @@ const EXPECTED_SKILLS = [
   "jasnah-query",
   "jasnah-search-memory",
   "jira",
+  "k8s-audit",
   "meditate",
   "reducing-entropy",
   "refine",
@@ -24,7 +25,7 @@ const EXPECTED_SKILLS = [
 ] as const;
 
 describe("discoverSkills", () => {
-  test("discovers all 16 skills from skills/ directory", async () => {
+  test("discovers all 17 skills from skills/ directory", async () => {
     const registry = await discoverSkills(SKILLS_DIR);
 
     expect(registry.errors).toEqual([]);
