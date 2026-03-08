@@ -1,10 +1,9 @@
+import { FileSystem } from "@effect/platform"
 import { Effect, Schema } from "effect"
-import { readFile } from "fs/promises"
 import { join } from "path"
 import { FileOperationError } from "../errors.js"
-import { Order, OrderLog } from "./schema.js"
+import { Order, OrderLog, OrderLogJson } from "./schema.js"
 
-const OrderLogJson = Schema.parseJson(OrderLog)
 const decodeOrderLog = Schema.decodeUnknown(OrderLogJson)
 
 /**
@@ -15,19 +14,27 @@ const decodeOrderLog = Schema.decodeUnknown(OrderLogJson)
  */
 export const readOrders = (dir: string) =>
   Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem
+
     const targetPath = join(dir, "orders.json")
     const walPath = join(dir, "orders-next.json")
 
     const loadOrders = (filePath: string) =>
       Effect.gen(function* () {
-        const raw = yield* Effect.tryPromise({
-          try: () => readFile(filePath, "utf-8"),
-          catch: () =>
-            new FileOperationError({
-              message: "Failed to read orders file",
-              filePath,
-            }),
-        }).pipe(Effect.catchAll(() => Effect.succeed("")))
+        const raw = yield* fs.readFileString(filePath).pipe(
+          Effect.catchTag("SystemError", (e) =>
+            e.reason === "NotFound" ? Effect.succeed("") : Effect.fail(e),
+          ),
+          Effect.mapError(
+            (e) =>
+              new FileOperationError({
+                message: "Failed to read orders file",
+                filePath,
+                cause: e,
+              }),
+          ),
+          Effect.catchAll(() => Effect.succeed("")),
+        )
 
         if (!raw) return [] as Order[]
 

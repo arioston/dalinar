@@ -1,45 +1,36 @@
-import { Effect } from "effect"
-import { readFile, writeFile, mkdir } from "fs/promises"
+import { FileSystem } from "@effect/platform"
+import { Effect, Schema } from "effect"
 import { dirname } from "path"
 import { FileOperationError } from "../errors.js"
-import { Order, OrderLog } from "./schema.js"
+import { Order, OrderLog, OrderLogJson } from "./schema.js"
 
 export const appendOrder = (walPath: string, order: Order) =>
   Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem
+
     // Ensure directory exists
-    yield* Effect.tryPromise({
-      try: () => mkdir(dirname(walPath), { recursive: true }),
-      catch: (error) =>
-        new FileOperationError({
-          message: "Failed to create WAL directory",
-          filePath: walPath,
-          cause: error,
-        }),
-    })
+    yield* fs.makeDirectory(dirname(walPath), { recursive: true }).pipe(
+      Effect.mapError(
+        (e) =>
+          new FileOperationError({
+            message: "Failed to create WAL directory",
+            filePath: walPath,
+            cause: e,
+          }),
+      ),
+    )
 
     // Load existing WAL
-    const existing = yield* Effect.tryPromise({
-      try: async () => {
-        try {
-          const raw = await readFile(walPath, "utf-8")
-          const parsed = JSON.parse(raw)
-          return new OrderLog({
-            orders: (parsed.orders ?? []).map(
-              (o: unknown) => new Order(o as any),
-            ),
-            lastPromotedAt: parsed.lastPromotedAt,
-          })
-        } catch {
-          return new OrderLog({ orders: [] })
-        }
-      },
-      catch: (error) =>
-        new FileOperationError({
-          message: "Failed to read WAL",
-          filePath: walPath,
-          cause: error,
-        }),
-    })
+    const existing = yield* fs.readFileString(walPath).pipe(
+      Effect.catchTag("SystemError", (e) =>
+        e.reason === "NotFound" ? Effect.succeed("") : Effect.fail(e),
+      ),
+      Effect.flatMap((raw) =>
+        raw ? Schema.decode(OrderLogJson)(raw) : Effect.succeed(new OrderLog({ orders: [] })),
+      ),
+      // Any failure (corrupt JSON, schema mismatch) → empty WAL
+      Effect.catchAll(() => Effect.succeed(new OrderLog({ orders: [] }))),
+    )
 
     // Dedup by order.id
     if (existing.orders.some((o) => o.id === order.id)) {
@@ -51,15 +42,16 @@ export const appendOrder = (walPath: string, order: Order) =>
       lastPromotedAt: existing.lastPromotedAt,
     })
 
-    yield* Effect.tryPromise({
-      try: () => writeFile(walPath, JSON.stringify(updated, null, 2), "utf-8"),
-      catch: (error) =>
-        new FileOperationError({
-          message: "Failed to write WAL",
-          filePath: walPath,
-          cause: error,
-        }),
-    })
+    yield* fs.writeFileString(walPath, JSON.stringify(updated, null, 2)).pipe(
+      Effect.mapError(
+        (e) =>
+          new FileOperationError({
+            message: "Failed to write WAL",
+            filePath: walPath,
+            cause: e,
+          }),
+      ),
+    )
 
     return updated
   }).pipe(Effect.withSpan("wal-append"))

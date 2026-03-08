@@ -70,3 +70,21 @@ export {
   parseSemver,
   checkVersionCompat,
 } from "./version.js";
+
+export {
+  SUPPORTED_PROVIDERS,
+  SUPPORTED_MODELS,
+  DEFAULT_PROVIDER,
+  DEFAULT_MODEL,
+  type SupportedProvider,
+  type ModelValidationResult,
+  validateModelConfig,
+  formatModelRemediationMessage,
+} from "./model-config.js"
+
+export {
+  type CompatibilityEntry,
+  type CompatibilityCheckResult,
+  COMPATIBILITY_MATRIX,
+  checkCompatibility,
+} from "./compatibility.js"

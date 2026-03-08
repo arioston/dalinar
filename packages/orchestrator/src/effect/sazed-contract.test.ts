@@ -1,8 +1,11 @@
 /**
  * Sazed CLI contract tests.
  *
- * Schema roundtrip tests (always run) + integration tests that invoke
- * the real Sazed CLI subprocess and validate output against protocol schemas.
+ * - Schema roundtrip tests (always run)
+ * - Negative/failure-path tests (always run)
+ * - Version compatibility tests (always run)
+ * - Golden file fixture tests (always run, no subprocess)
+ * - Live CLI integration tests (opt-in via RUN_EXTERNAL_TESTS=1)
  */
 
 import { describe, expect, test } from "bun:test"
@@ -17,17 +20,14 @@ import {
 } from "@dalinar/protocol"
 import { SubprocessService, SubprocessServiceLive } from "./subprocess.js"
 import { resolveDalinarRoot } from "./paths.js"
+import { SazedEnvelope, extractJsonEnvelope } from "./services.js"
 import { resolve } from "path"
+import { existsSync, readFileSync } from "fs"
 
-const Envelope = <A extends Schema.Schema.AnyNoContext>(dataSchema: A) =>
-  Schema.parseJson(
-    Schema.Struct({
-      contractVersion: Schema.String,
-      data: dataSchema,
-    }),
-  )
+// Alias for test brevity.
+const Envelope = SazedEnvelope
 
-const SKIP_INTEGRATION = !!process.env.SKIP_INTEGRATION_TESTS
+const RUN_EXTERNAL = !!process.env.RUN_EXTERNAL_TESTS
 
 // ── Schema roundtrip tests (no subprocess, always run) ──────────
 
@@ -220,6 +220,96 @@ describe("Sazed contract schemas (roundtrip)", () => {
   })
 })
 
+// ── Negative / failure-path tests ───────────────────────────────
+
+describe("Sazed envelope failure paths", () => {
+  test("missing contractVersion field rejects", () => {
+    const bad = JSON.stringify({
+      data: { notes: [] },
+    })
+
+    expect(() =>
+      Schema.decodeUnknownSync(Envelope(SazedNotesListOutput))(bad),
+    ).toThrow()
+  })
+
+  test("missing data field rejects", () => {
+    const bad = JSON.stringify({
+      contractVersion: "1.0.0",
+    })
+
+    expect(() =>
+      Schema.decodeUnknownSync(Envelope(SazedNotesListOutput))(bad),
+    ).toThrow()
+  })
+
+  test("contractVersion as number rejects", () => {
+    const bad = JSON.stringify({
+      contractVersion: 1,
+      data: { notes: [] },
+    })
+
+    expect(() =>
+      Schema.decodeUnknownSync(Envelope(SazedNotesListOutput))(bad),
+    ).toThrow()
+  })
+
+  test("truncated JSON rejects gracefully", () => {
+    const truncated = '{"contractVersion":"1.0.0","data":{"notes":[{"slug":"x'
+
+    expect(() =>
+      Schema.decodeUnknownSync(Envelope(SazedNotesListOutput))(truncated),
+    ).toThrow()
+  })
+
+  test("empty string rejects gracefully", () => {
+    expect(() =>
+      Schema.decodeUnknownSync(Envelope(SazedNotesListOutput))(""),
+    ).toThrow()
+  })
+
+  test("data contains wrong shape for expected schema rejects", () => {
+    const bad = JSON.stringify({
+      contractVersion: "1.0.0",
+      data: {
+        // SazedNotesListOutput expects { notes: [...] }
+        // but we provide SazedStatusOutput shape
+        epicKey: "EPIC-1",
+        basedOnCommit: "abc",
+        tasks: [],
+      },
+    })
+
+    expect(() =>
+      Schema.decodeUnknownSync(Envelope(SazedNotesListOutput))(bad),
+    ).toThrow()
+  })
+
+  test("extra unknown fields in envelope are accepted (open struct)", () => {
+    const withExtra = JSON.stringify({
+      contractVersion: "1.0.0",
+      data: { notes: [] },
+      extraField: "should be ignored",
+    })
+
+    // Schema.Struct is open by default — extra fields are silently dropped
+    const decoded = Schema.decodeUnknownSync(Envelope(SazedNotesListOutput))(withExtra)
+    expect(decoded.contractVersion).toBe("1.0.0")
+  })
+
+  test("null input rejects", () => {
+    expect(() =>
+      Schema.decodeUnknownSync(Envelope(SazedNotesListOutput))(null as any),
+    ).toThrow()
+  })
+
+  test("non-JSON string rejects", () => {
+    expect(() =>
+      Schema.decodeUnknownSync(Envelope(SazedNotesListOutput))("not json at all"),
+    ).toThrow()
+  })
+})
+
 // ── Version compatibility tests ──────────────────────────────────
 
 describe("Contract version policy", () => {
@@ -238,9 +328,106 @@ describe("Contract version policy", () => {
   })
 })
 
-// ── Integration tests (real subprocess) ──────────────────────────
-// These require the Sazed CLI to be available. They validate that
-// the real CLI output matches the protocol schemas.
+// ── Sazed submodule version check ──────────────────────────────
+
+describe("Sazed submodule version", () => {
+  test.skipIf(!existsSync(resolve(resolveDalinarRoot(), "modules/sazed/packages/cli/package.json")))(
+    "sazed CLI submodule version is readable and compatible",
+    () => {
+      const raw = readFileSync(resolve(resolveDalinarRoot(), "modules/sazed/packages/cli/package.json"), "utf-8")
+      const pkg = JSON.parse(raw)
+      const version = pkg.version as string | undefined
+      expect(typeof version).toBe("string")
+      const result = checkVersionCompat(SAZED_CONTRACT_VERSION, version!)
+      expect(["exact", "minor-drift", "major-mismatch"]).toContain(result)
+    },
+  )
+})
+
+// ── extractJsonEnvelope tests ────────────────────────────────────
+
+describe("extractJsonEnvelope", () => {
+  test("returns clean JSON unchanged", () => {
+    const json = '{"contractVersion":"1.0.0","data":{"notes":[]}}'
+    expect(extractJsonEnvelope(json)).toBe(json)
+  })
+
+  test("strips leading log lines", () => {
+    const dirty = 'Loading config...\nInitializing...\n{"contractVersion":"1.0.0","data":{"notes":[]}}'
+    const result = extractJsonEnvelope(dirty)
+    expect(JSON.parse(result)).toEqual({ contractVersion: "1.0.0", data: { notes: [] } })
+  })
+
+  test("strips trailing log lines", () => {
+    const dirty = '{"contractVersion":"1.0.0","data":{"notes":[]}}\nDone in 0.5s'
+    const result = extractJsonEnvelope(dirty)
+    expect(JSON.parse(result)).toEqual({ contractVersion: "1.0.0", data: { notes: [] } })
+  })
+
+  test("handles array JSON", () => {
+    const dirty = 'log line\n[{"id":1},{"id":2}]\ntrailer'
+    const result = extractJsonEnvelope(dirty)
+    expect(JSON.parse(result)).toEqual([{ id: 1 }, { id: 2 }])
+  })
+
+  test("returns original when no JSON found", () => {
+    expect(extractJsonEnvelope("no json here")).toBe("no json here")
+  })
+})
+
+// ── Golden file fixture tests (offline contract validation) ──────
+
+const fixturesDir = resolve(import.meta.dir, "fixtures")
+
+describe("Golden file fixtures", () => {
+  test("notes-list fixture decodes through SazedNotesListOutput", () => {
+    const raw = readFileSync(resolve(fixturesDir, "notes-list.json"), "utf-8")
+    const decoded = Schema.decodeUnknownSync(Envelope(SazedNotesListOutput))(raw)
+
+    expect(decoded.contractVersion).toBe(SAZED_CONTRACT_VERSION)
+    expect(decoded.data.notes).toHaveLength(2)
+    expect(decoded.data.notes[0].slug).toBe("auth-rule")
+  })
+
+  test("notes-search fixture decodes through SazedNotesListOutput", () => {
+    const raw = readFileSync(resolve(fixturesDir, "notes-search.json"), "utf-8")
+    const decoded = Schema.decodeUnknownSync(Envelope(SazedNotesListOutput))(raw)
+
+    expect(decoded.contractVersion).toBe(SAZED_CONTRACT_VERSION)
+    expect(decoded.data.notes).toHaveLength(1)
+  })
+
+  test("status-empty fixture decodes through SazedStatusOutput", () => {
+    const raw = readFileSync(resolve(fixturesDir, "status-empty.json"), "utf-8")
+    const decoded = Schema.decodeUnknownSync(Envelope(SazedStatusOutput))(raw)
+
+    expect(decoded.contractVersion).toBe(SAZED_CONTRACT_VERSION)
+    expect(decoded.data.epicKey).toBe("TEST-NONEXISTENT")
+    expect(decoded.data.tasks).toEqual([])
+  })
+
+  test("analyze fixture decodes through SazedAnalyzeOutput", () => {
+    const raw = readFileSync(resolve(fixturesDir, "analyze.json"), "utf-8")
+    const decoded = Schema.decodeUnknownSync(Envelope(SazedAnalyzeOutput))(raw)
+
+    expect(decoded.contractVersion).toBe(SAZED_CONTRACT_VERSION)
+    expect(decoded.data.epicKey).toBe("EPIC-1")
+    expect(decoded.data.tasks).toHaveLength(1)
+    expect(decoded.data.notes).toHaveLength(1)
+  })
+
+  test("fixtures survive extractJsonEnvelope + decode (simulating log contamination)", () => {
+    const raw = readFileSync(resolve(fixturesDir, "notes-list.json"), "utf-8")
+    const dirty = `[sazed] Loading...\n${raw}\n[sazed] Done`
+    const cleaned = extractJsonEnvelope(dirty)
+    const decoded = Schema.decodeUnknownSync(Envelope(SazedNotesListOutput))(cleaned)
+
+    expect(decoded.data.notes).toHaveLength(2)
+  })
+})
+
+// ── Live CLI integration tests (opt-in) ──────────────────────────
+// Set RUN_EXTERNAL_TESTS=1 to enable. Requires Sazed CLI + API key.
 
 const dalinarRoot = resolveDalinarRoot()
 const sazedCli = resolve(dalinarRoot, "modules/sazed/packages/cli/src/main.ts")
@@ -256,27 +443,28 @@ const runSazed = (args: string[]) =>
   }).pipe(
     Effect.provide(SubprocessServiceLive),
     Effect.timeout("15 seconds"),
-    Effect.catchAll(() => Effect.succeed({ stdout: "", stderr: "timeout", exitCode: 1 })),
+    Effect.catchAll(() => Effect.succeed({ stdout: "", stderr: "timeout", exitCode: 1, timedOut: false })),
   )
 
-/** Assert stdout is pure JSON (no log lines mixed in). */
+/** Assert stdout contains valid JSON after extraction. */
 function assertCleanJson(stdout: string) {
-  const trimmed = stdout.trim()
+  const cleaned = extractJsonEnvelope(stdout)
   expect(
-    trimmed.startsWith("{") || trimmed.startsWith("["),
-    `stdout must start with JSON, got: ${trimmed.slice(0, 80)}`,
+    cleaned.startsWith("{") || cleaned.startsWith("["),
+    `stdout must contain JSON, got: ${cleaned.slice(0, 80)}`,
   ).toBe(true)
-  expect(() => JSON.parse(trimmed)).not.toThrow()
+  expect(() => JSON.parse(cleaned)).not.toThrow()
 }
 
-describe.skipIf(SKIP_INTEGRATION)("Sazed CLI contract (integration)", () => {
+describe.skipIf(!RUN_EXTERNAL)("Sazed CLI contract (integration)", () => {
   test("notes list --json produces valid SazedNotesListOutput", async () => {
     const result = await Effect.runPromise(runSazed(["notes", "list", "--json"]))
 
     expect(result.exitCode, `sazed failed: ${result.stderr}`).toBe(0)
     assertCleanJson(result.stdout)
 
-    const decoded = Schema.decodeUnknownSync(Envelope(SazedNotesListOutput))(result.stdout)
+    const cleaned = extractJsonEnvelope(result.stdout)
+    const decoded = Schema.decodeUnknownSync(Envelope(SazedNotesListOutput))(cleaned)
 
     expect(decoded.contractVersion).toBe(SAZED_CONTRACT_VERSION)
     expect(Array.isArray(decoded.data.notes)).toBe(true)
@@ -293,7 +481,8 @@ describe.skipIf(SKIP_INTEGRATION)("Sazed CLI contract (integration)", () => {
     expect(result.exitCode, `sazed failed: ${result.stderr}`).toBe(0)
     assertCleanJson(result.stdout)
 
-    const decoded = Schema.decodeUnknownSync(Envelope(SazedNotesListOutput))(result.stdout)
+    const cleaned = extractJsonEnvelope(result.stdout)
+    const decoded = Schema.decodeUnknownSync(Envelope(SazedNotesListOutput))(cleaned)
     expect(decoded.contractVersion).toBe(SAZED_CONTRACT_VERSION)
     expect(Array.isArray(decoded.data.notes)).toBe(true)
   })
@@ -304,7 +493,8 @@ describe.skipIf(SKIP_INTEGRATION)("Sazed CLI contract (integration)", () => {
     expect(result.exitCode, `sazed failed: ${result.stderr}`).toBe(0)
     assertCleanJson(result.stdout)
 
-    const decoded = Schema.decodeUnknownSync(Envelope(SazedNotesListOutput))(result.stdout)
+    const cleaned = extractJsonEnvelope(result.stdout)
+    const decoded = Schema.decodeUnknownSync(Envelope(SazedNotesListOutput))(cleaned)
 
     expect(decoded.contractVersion).toBe(SAZED_CONTRACT_VERSION)
     expect(Array.isArray(decoded.data.notes)).toBe(true)
@@ -321,7 +511,8 @@ describe.skipIf(SKIP_INTEGRATION)("Sazed CLI contract (integration)", () => {
     expect(result.exitCode, `sazed failed: ${result.stderr}`).toBe(0)
     assertCleanJson(result.stdout)
 
-    const decoded = Schema.decodeUnknownSync(Envelope(SazedStatusOutput))(result.stdout)
+    const cleaned = extractJsonEnvelope(result.stdout)
+    const decoded = Schema.decodeUnknownSync(Envelope(SazedStatusOutput))(cleaned)
     expect(decoded.contractVersion).toBe(SAZED_CONTRACT_VERSION)
     expect(decoded.data.epicKey).toBe("TEST-NONEXISTENT")
     expect(decoded.data.tasks).toEqual([])

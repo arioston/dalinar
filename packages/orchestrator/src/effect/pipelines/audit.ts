@@ -1,4 +1,4 @@
-import { Effect } from "effect"
+import { Clock, Effect } from "effect"
 import { resolve, basename } from "path"
 import { readdir, readFile, access } from "fs/promises"
 import { parseFrontmatter } from "@dalinar/protocol"
@@ -327,73 +327,67 @@ export function formatReport(report: AuditReport): string {
 // ── Memory loading (Effect-wrapped I/O) ────────────────────────────
 
 const discoverMemoryRoots = (basePath: string) =>
-  Effect.tryPromise({
-    try: async () => {
-      const results: { root: string; project: string }[] = []
-      let topLevel: string[]
-      try {
-        topLevel = await readdir(basePath)
-      } catch {
-        return results
-      }
-
-      for (const entry of topLevel) {
-        const candidateMemory = resolve(basePath, entry, ".memory")
-        try {
-          await access(candidateMemory)
-          results.push({ root: resolve(basePath, entry), project: entry })
-        } catch {
-          // No .memory dir here
-        }
-      }
+  Effect.tryPromise(async () => {
+    const results: { root: string; project: string }[] = []
+    let topLevel: string[]
+    try {
+      topLevel = await readdir(basePath)
+    } catch {
       return results
-    },
-    catch: () => [] as { root: string; project: string }[],
-  })
+    }
+
+    for (const entry of topLevel) {
+      const candidateMemory = resolve(basePath, entry, ".memory")
+      try {
+        await access(candidateMemory)
+        results.push({ root: resolve(basePath, entry), project: entry })
+      } catch {
+        // No .memory dir here
+      }
+    }
+    return results
+  }).pipe(Effect.orElseSucceed(() => [] as { root: string; project: string }[]))
 
 const loadMemoriesFromRoot = (root: string, project?: string) =>
-  Effect.tryPromise({
-    try: async () => {
-      const memoryRoot = resolve(root, ".memory")
-      const entries: MemoryEntry[] = []
+  Effect.tryPromise(async () => {
+    const memoryRoot = resolve(root, ".memory")
+    const entries: MemoryEntry[] = []
 
-      for (const dir of MEMORY_DIRS) {
-        const dirPath = resolve(memoryRoot, dir)
-        let files: string[]
+    for (const dir of MEMORY_DIRS) {
+      const dirPath = resolve(memoryRoot, dir)
+      let files: string[]
+      try {
+        files = await readdir(dirPath)
+      } catch {
+        continue
+      }
+
+      for (const file of files) {
+        if (!file.endsWith(".md")) continue
         try {
-          files = await readdir(dirPath)
+          const raw = await readFile(resolve(dirPath, file), "utf-8")
+          const { frontmatter, content } = parseFrontmatter(raw)
+          entries.push({
+            id: (frontmatter.id as string) ?? basename(file, ".md"),
+            type: (frontmatter.type as string) ?? dir,
+            summary:
+              (frontmatter.summary as string) || extractFirstLine(content),
+            content,
+            tags: Array.isArray(frontmatter.tags)
+              ? (frontmatter.tags as string[])
+              : [],
+            confidence: (frontmatter.confidence as string) ?? "medium",
+            createdAt: frontmatter.createdAt as string | undefined,
+            source: frontmatter.source as string | undefined,
+            project,
+          })
         } catch {
-          continue
-        }
-
-        for (const file of files) {
-          if (!file.endsWith(".md")) continue
-          try {
-            const raw = await readFile(resolve(dirPath, file), "utf-8")
-            const { frontmatter, content } = parseFrontmatter(raw)
-            entries.push({
-              id: (frontmatter.id as string) ?? basename(file, ".md"),
-              type: (frontmatter.type as string) ?? dir,
-              summary:
-                (frontmatter.summary as string) || extractFirstLine(content),
-              content,
-              tags: Array.isArray(frontmatter.tags)
-                ? (frontmatter.tags as string[])
-                : [],
-              confidence: (frontmatter.confidence as string) ?? "medium",
-              createdAt: frontmatter.createdAt as string | undefined,
-              source: frontmatter.source as string | undefined,
-              project,
-            })
-          } catch {
-            // Skip malformed files
-          }
+          // Skip malformed files
         }
       }
-      return entries
-    },
-    catch: () => [] as MemoryEntry[],
-  })
+    }
+    return entries
+  }).pipe(Effect.orElseSucceed(() => [] as MemoryEntry[]))
 
 const loadMemories = (root: string, rootsBase?: string) =>
   Effect.gen(function* () {
@@ -454,8 +448,12 @@ export const auditPipeline = (
         (severityOrder[a.severity] ?? 2) - (severityOrder[b.severity] ?? 2),
     )
 
+    const reportTimestamp = yield* Clock.currentTimeMillis.pipe(
+      Effect.map((ms) => new Date(ms).toISOString()),
+    )
+
     const report: AuditReport = {
-      timestamp: new Date().toISOString(),
+      timestamp: reportTimestamp,
       memoriesScanned: entries.length,
       findings,
       tagFrequency,
@@ -480,7 +478,7 @@ export const auditPipeline = (
         )
         const result = yield* jasnah.extractMemories(extractEntries, {
           root,
-          source: `audit-${new Date().toISOString().slice(0, 10)}`,
+          source: `audit-${reportTimestamp.slice(0, 10)}`,
         })
         if (result.success) {
           yield* Effect.log(

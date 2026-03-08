@@ -6,7 +6,7 @@ import type {
   BlockerEntry,
   WinEntry,
   DecisionRevision,
-} from "../../reflect.js"
+} from "../types/reflect.js"
 
 // Re-export types for convenience
 export type { SprintReflection, EstimateCorrection, BlockerEntry, WinEntry, DecisionRevision }

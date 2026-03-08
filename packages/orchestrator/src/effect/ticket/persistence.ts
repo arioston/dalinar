@@ -1,22 +1,31 @@
-import { Schema } from "effect"
-import type { TicketState } from "./state.js"
-import { Unclaimed, Claimed, InProgress, Done, Blocked } from "./state.js"
+import { Effect, Schema } from "effect"
+import type { ParseResult } from "effect"
+import {
+  type TicketState,
+  Unclaimed,
+  Claimed,
+  InProgress,
+  Done,
+  Blocked,
+} from "./state.js"
 
-// ── Schema codecs for disk I/O (decode-at-edge) ───────────────────
+// -- Schema codecs for disk I/O (decode-at-edge) ───────────────────
+// Each schema decodes raw JSON into a typed struct, then transforms
+// it into a Data.tagged value so the output type IS TicketState.
 
-const UnclaimedSchema = Schema.Struct({
+const UnclaimedStruct = Schema.Struct({
   _tag: Schema.Literal("Unclaimed"),
   ticketKey: Schema.String,
 })
 
-const ClaimedSchema = Schema.Struct({
+const ClaimedStruct = Schema.Struct({
   _tag: Schema.Literal("Claimed"),
   ticketKey: Schema.String,
   claimedBy: Schema.String,
   claimedAt: Schema.String,
 })
 
-const InProgressSchema = Schema.Struct({
+const InProgressStruct = Schema.Struct({
   _tag: Schema.Literal("InProgress"),
   ticketKey: Schema.String,
   claimedBy: Schema.String,
@@ -24,20 +33,70 @@ const InProgressSchema = Schema.Struct({
   startedAt: Schema.String,
 })
 
-const DoneSchema = Schema.Struct({
+const DoneStruct = Schema.Struct({
   _tag: Schema.Literal("Done"),
   ticketKey: Schema.String,
   claimedBy: Schema.String,
   completedAt: Schema.String,
 })
 
-const BlockedSchema = Schema.Struct({
+const BlockedStruct = Schema.Struct({
   _tag: Schema.Literal("Blocked"),
   ticketKey: Schema.String,
   claimedBy: Schema.String,
   blockedAt: Schema.String,
   reason: Schema.String,
 })
+
+const UnclaimedSchema = Schema.transform(
+  UnclaimedStruct,
+  Schema.typeSchema(UnclaimedStruct),
+  {
+    strict: true,
+    decode: (s) => Unclaimed({ ticketKey: s.ticketKey }),
+    encode: (s) => ({ ...s }),
+  },
+)
+
+const ClaimedSchema = Schema.transform(
+  ClaimedStruct,
+  Schema.typeSchema(ClaimedStruct),
+  {
+    strict: true,
+    decode: (s) => Claimed({ ticketKey: s.ticketKey, claimedBy: s.claimedBy, claimedAt: s.claimedAt }),
+    encode: (s) => ({ ...s }),
+  },
+)
+
+const InProgressSchema = Schema.transform(
+  InProgressStruct,
+  Schema.typeSchema(InProgressStruct),
+  {
+    strict: true,
+    decode: (s) => InProgress({ ticketKey: s.ticketKey, claimedBy: s.claimedBy, claimedAt: s.claimedAt, startedAt: s.startedAt }),
+    encode: (s) => ({ ...s }),
+  },
+)
+
+const DoneSchema = Schema.transform(
+  DoneStruct,
+  Schema.typeSchema(DoneStruct),
+  {
+    strict: true,
+    decode: (s) => Done({ ticketKey: s.ticketKey, claimedBy: s.claimedBy, completedAt: s.completedAt }),
+    encode: (s) => ({ ...s }),
+  },
+)
+
+const BlockedSchema = Schema.transform(
+  BlockedStruct,
+  Schema.typeSchema(BlockedStruct),
+  {
+    strict: true,
+    decode: (s) => Blocked({ ticketKey: s.ticketKey, claimedBy: s.claimedBy, blockedAt: s.blockedAt, reason: s.reason }),
+    encode: (s) => ({ ...s }),
+  },
+)
 
 export const TicketStateSchema = Schema.Union(
   UnclaimedSchema,
@@ -47,46 +106,11 @@ export const TicketStateSchema = Schema.Union(
   BlockedSchema,
 )
 
-export const TicketStateJson = Schema.parseJson(TicketStateSchema)
+const TicketStateJson = Schema.parseJson(TicketStateSchema)
+
+export const decodeTicketState = (json: string): Effect.Effect<TicketState, ParseResult.ParseError> =>
+  Schema.decode(TicketStateJson)(json)
 
 export function encodeTicketState(state: TicketState): string {
   return JSON.stringify(state, null, 2)
-}
-
-export function decodeTicketState(
-  json: string,
-): TicketState {
-  const raw = JSON.parse(json)
-  switch (raw._tag) {
-    case "Unclaimed":
-      return Unclaimed({ ticketKey: raw.ticketKey })
-    case "Claimed":
-      return Claimed({
-        ticketKey: raw.ticketKey,
-        claimedBy: raw.claimedBy,
-        claimedAt: raw.claimedAt,
-      })
-    case "InProgress":
-      return InProgress({
-        ticketKey: raw.ticketKey,
-        claimedBy: raw.claimedBy,
-        claimedAt: raw.claimedAt,
-        startedAt: raw.startedAt,
-      })
-    case "Done":
-      return Done({
-        ticketKey: raw.ticketKey,
-        claimedBy: raw.claimedBy,
-        completedAt: raw.completedAt,
-      })
-    case "Blocked":
-      return Blocked({
-        ticketKey: raw.ticketKey,
-        claimedBy: raw.claimedBy,
-        blockedAt: raw.blockedAt,
-        reason: raw.reason,
-      })
-    default:
-      throw new Error(`Unknown ticket state: ${raw._tag}`)
-  }
 }

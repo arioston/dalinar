@@ -1,8 +1,8 @@
-import { Context, Effect, Layer, Schedule } from "effect"
-import { resolve } from "path"
+import { Context, Effect, Layer, Schedule, Schema } from "effect"
 import { JiraError } from "../errors.js"
 import { JiraTask } from "../jira-schemas.js"
 import { SubprocessService } from "../subprocess.js"
+import { resolveJiraScript } from "../paths.js"
 
 // ── ResolvedKey ─────────────────────────────────────────────────
 
@@ -12,6 +12,79 @@ export interface ResolvedKey {
   issueType: string
   taskSummary?: string | undefined
 }
+
+// ── Jira API response schemas ───────────────────────────────────
+
+const JiraIssueFields = Schema.Struct({
+  summary: Schema.optional(Schema.String),
+  status: Schema.optional(Schema.Struct({ name: Schema.String })),
+  issuetype: Schema.optional(Schema.Struct({ name: Schema.String })),
+  assignee: Schema.optional(Schema.Struct({ displayName: Schema.String })),
+  parent: Schema.optional(Schema.Struct({ key: Schema.String })),
+  customfield_10014: Schema.optional(Schema.String),  // Epic Link
+  customfield_10016: Schema.optional(Schema.Number),  // Story Points
+  labels: Schema.optional(Schema.Array(Schema.String)),
+})
+
+const JiraIssueResponse = Schema.Struct({
+  fields: Schema.optional(JiraIssueFields),
+})
+
+const JiraSearchResponse = Schema.Struct({
+  issues: Schema.optional(
+    Schema.Array(
+      Schema.Struct({
+        key: Schema.String,
+        fields: Schema.optional(JiraIssueFields),
+      }),
+    ),
+  ),
+})
+
+type JiraIssueFieldsType = typeof JiraIssueFields.Type
+
+// ── Decode helpers ──────────────────────────────────────────────
+
+/** Extract the first JSON line from mixed stdout (logs + JSON). */
+const extractJsonLine = (stdout: string): Effect.Effect<string, JiraError> =>
+  Effect.try({
+    try: () => {
+      const jsonLine = stdout.split("\n").find((l) => l.startsWith("{") || l.startsWith("["))
+      if (!jsonLine) throw new Error("No JSON found in stdout")
+      return jsonLine
+    },
+    catch: () =>
+      new JiraError({
+        message: "No JSON found in Jira CLI stdout",
+        operation: "decodeResponse",
+      }),
+  })
+
+/** Decode a JSON string through a Schema, mapping errors to JiraError. */
+const decodeJiraResponse = <A, I>(schema: Schema.Schema<A, I, never>) =>
+  (stdout: string): Effect.Effect<A, JiraError> =>
+    extractJsonLine(stdout).pipe(
+      Effect.flatMap((jsonLine) =>
+        Effect.try({
+          try: () => JSON.parse(jsonLine),
+          catch: () =>
+            new JiraError({
+              message: "Failed to parse JSON from Jira stdout",
+              operation: "decodeResponse",
+            }),
+        }),
+      ),
+      Effect.flatMap((parsed) =>
+        Schema.decodeUnknown(schema)(parsed).pipe(
+          Effect.mapError((e) =>
+            new JiraError({
+              message: `Schema decode failed: ${e.message}`,
+              operation: "decodeResponse",
+            }),
+          ),
+        ),
+      ),
+    )
 
 // ── JiraService ─────────────────────────────────────────────────
 
@@ -26,38 +99,18 @@ export class JiraService extends Context.Tag("@dalinar/JiraService")<
   JiraServiceShape
 >() {}
 
-function jiraScript(): string {
-  return resolve(
-    process.env.DALINAR_ROOT ?? process.cwd(),
-    "skills/jira/jira-request.ts",
-  )
-}
-
-function parseJsonFromStdout(stdout: string): unknown {
-  const jsonLine = stdout.split("\n").find((l) => l.startsWith("{") || l.startsWith("["))
-  if (!jsonLine) return undefined
-  return JSON.parse(jsonLine)
-}
-
-// Jira API response shapes (minimal — just the fields we access)
-interface JiraIssueFields {
-  readonly summary?: string
-  readonly status?: { readonly name: string }
-  readonly issuetype?: { readonly name: string }
-  readonly assignee?: { readonly displayName: string }
-  readonly parent?: { readonly key: string }
-  readonly customfield_10014?: string  // Epic Link
-  readonly customfield_10016?: number  // Story Points
-  readonly labels?: readonly string[]
-}
-
-interface JiraIssueResponse {
-  readonly fields?: JiraIssueFields
-}
-
-interface JiraSearchResponse {
-  readonly issues?: readonly (JiraIssueResponse & { readonly key: string })[]
-}
+/** Map decoded Jira fields to a JiraTask Schema.Class instance. */
+const fieldsToJiraTask = (key: string, fields: JiraIssueFieldsType | undefined): JiraTask =>
+  new JiraTask({
+    key,
+    summary: fields?.summary ?? "",
+    status: fields?.status?.name ?? "Unknown",
+    issueType: fields?.issuetype?.name ?? "Unknown",
+    assignee: fields?.assignee?.displayName,
+    storyPoints: fields?.customfield_10016,
+    labels: fields?.labels,
+    parentKey: fields?.parent?.key ?? fields?.customfield_10014,
+  })
 
 const jiraRetry = Schedule.exponential("500 millis").pipe(
   Schedule.intersect(Schedule.recurs(3)),
@@ -69,9 +122,10 @@ const makeJiraService = Effect.gen(function* () {
   const resolveKey: JiraServiceShape["resolveKey"] = (key) =>
     Effect.gen(function* () {
       const result = yield* subprocess
-        .run(jiraScript(), {
+        .run(resolveJiraScript(), {
           args: ["GET", `/rest/api/2/issue/${key}?fields=issuetype,parent,customfield_10014,summary`],
           nothrow: true,
+          timeout: "10 seconds",
         })
         .pipe(
           Effect.mapError(
@@ -87,12 +141,9 @@ const makeJiraService = Effect.gen(function* () {
 
       if (result.exitCode !== 0) return null
 
-      let data: JiraIssueResponse | undefined
-      try {
-        data = parseJsonFromStdout(result.stdout) as JiraIssueResponse | undefined
-      } catch {
-        return null
-      }
+      const data = yield* decodeJiraResponse(JiraIssueResponse)(result.stdout).pipe(
+        Effect.catchAll(() => Effect.succeed(null)),
+      )
       if (!data) return null
 
       const fields = data.fields
@@ -120,15 +171,16 @@ const makeJiraService = Effect.gen(function* () {
   const fetchTask: JiraServiceShape["fetchTask"] = (key) =>
     Effect.gen(function* () {
       const result = yield* subprocess
-        .run(jiraScript(), {
+        .run(resolveJiraScript(), {
           args: [
             "GET",
             `/rest/api/2/issue/${key}?fields=summary,status,issuetype,assignee,customfield_10016,labels,parent,customfield_10014`,
           ],
           nothrow: true,
+          timeout: "30 seconds",
+          retryPolicy: jiraRetry,
         })
         .pipe(
-          Effect.retry({ schedule: jiraRetry, while: (e) => e._tag === "SubprocessError" }),
           Effect.mapError(
             (e) =>
               new JiraError({
@@ -148,37 +200,19 @@ const makeJiraService = Effect.gen(function* () {
         })
       }
 
-      let data: JiraIssueResponse | undefined
-      try {
-        data = parseJsonFromStdout(result.stdout) as JiraIssueResponse | undefined
-      } catch (err) {
-        return yield* new JiraError({
-          message: `fetchTask failed to parse JSON: ${err}`,
-          operation: "fetchTask",
-          key,
-          cause: err,
-        })
-      }
+      const data = yield* decodeJiraResponse(JiraIssueResponse)(result.stdout).pipe(
+        Effect.mapError(
+          (e) =>
+            new JiraError({
+              message: `fetchTask decode failed: ${e.message}`,
+              operation: "fetchTask",
+              key,
+              cause: e,
+            }),
+        ),
+      )
 
-      if (!data) {
-        return yield* new JiraError({
-          message: "fetchTask returned no JSON",
-          operation: "fetchTask",
-          key,
-        })
-      }
-
-      const fields = data.fields
-      return new JiraTask({
-        key,
-        summary: fields?.summary ?? "",
-        status: fields?.status?.name ?? "Unknown",
-        issueType: fields?.issuetype?.name ?? "Unknown",
-        assignee: fields?.assignee?.displayName,
-        storyPoints: fields?.customfield_10016,
-        labels: fields?.labels as string[] | undefined,
-        parentKey: fields?.parent?.key ?? fields?.customfield_10014,
-      })
+      return fieldsToJiraTask(key, data.fields)
     }).pipe(Effect.withSpan("jira-fetch-task"))
 
   const fetchTasksForEpic: JiraServiceShape["fetchTasksForEpic"] = (epicKey) =>
@@ -187,15 +221,16 @@ const makeJiraService = Effect.gen(function* () {
         `"Epic Link" = ${epicKey} OR parent = ${epicKey}`,
       )
       const result = yield* subprocess
-        .run(jiraScript(), {
+        .run(resolveJiraScript(), {
           args: [
             "GET",
             `/rest/api/2/search?jql=${jql}&fields=summary,status,issuetype,assignee,customfield_10016,labels,parent,customfield_10014&maxResults=50`,
           ],
           nothrow: true,
+          timeout: "30 seconds",
+          retryPolicy: jiraRetry,
         })
         .pipe(
-          Effect.retry({ schedule: jiraRetry, while: (e) => e._tag === "SubprocessError" }),
           Effect.mapError(
             (e) =>
               new JiraError({
@@ -215,19 +250,19 @@ const makeJiraService = Effect.gen(function* () {
         })
       }
 
-      let data: JiraSearchResponse | undefined
-      try {
-        data = parseJsonFromStdout(result.stdout) as JiraSearchResponse | undefined
-      } catch (err) {
-        return yield* new JiraError({
-          message: `fetchTasksForEpic failed to parse JSON: ${err}`,
-          operation: "fetchTasksForEpic",
-          key: epicKey,
-          cause: err,
-        })
-      }
+      const data = yield* decodeJiraResponse(JiraSearchResponse)(result.stdout).pipe(
+        Effect.mapError(
+          (e) =>
+            new JiraError({
+              message: `fetchTasksForEpic decode failed: ${e.message}`,
+              operation: "fetchTasksForEpic",
+              key: epicKey,
+              cause: e,
+            }),
+        ),
+      )
 
-      if (!data || !Array.isArray(data.issues)) {
+      if (!data.issues || !Array.isArray(data.issues)) {
         return yield* new JiraError({
           message: "fetchTasksForEpic returned no issues array",
           operation: "fetchTasksForEpic",
@@ -235,19 +270,7 @@ const makeJiraService = Effect.gen(function* () {
         })
       }
 
-      return (data.issues ?? []).map((issue) => {
-        const fields = issue.fields
-        return new JiraTask({
-          key: issue.key,
-          summary: fields?.summary ?? "",
-          status: fields?.status?.name ?? "Unknown",
-          issueType: fields?.issuetype?.name ?? "Unknown",
-          assignee: fields?.assignee?.displayName,
-          storyPoints: fields?.customfield_10016,
-          labels: fields?.labels as string[] | undefined,
-          parentKey: fields?.parent?.key ?? fields?.customfield_10014,
-        })
-      }) as JiraTask[]
+      return data.issues.map((issue) => fieldsToJiraTask(issue.key, issue.fields))
     }).pipe(Effect.withSpan("jira-fetch-tasks-for-epic"))
 
   return {

@@ -1,4 +1,5 @@
 import { describe, expect, test, beforeEach, afterEach } from "bun:test"
+import { NodeFileSystem } from "@effect/platform-node"
 import { Effect } from "effect"
 import { mkdtemp, rm, readFile, writeFile, mkdir } from "fs/promises"
 import { tmpdir } from "os"
@@ -6,6 +7,9 @@ import { resolve, join } from "path"
 import { Order, OrderLog } from "./schema.js"
 import { appendOrder } from "./append.js"
 import { promote } from "./promotion.js"
+
+const runWithFs = <A, E>(effect: Effect.Effect<A, E, import("@effect/platform").FileSystem.FileSystem>) =>
+  Effect.runPromise(Effect.provide(effect, NodeFileSystem.layer))
 
 let tempDir: string
 
@@ -29,7 +33,7 @@ describe("appendOrder", () => {
       timestamp: "2026-01-01",
     })
 
-    await Effect.runPromise(appendOrder(walPath, order))
+    await runWithFs(appendOrder(walPath, order))
 
     const raw = await readFile(walPath, "utf-8")
     const log = JSON.parse(raw)
@@ -46,8 +50,8 @@ describe("appendOrder", () => {
       timestamp: "2026-01-01",
     })
 
-    await Effect.runPromise(appendOrder(walPath, order))
-    await Effect.runPromise(appendOrder(walPath, order))
+    await runWithFs(appendOrder(walPath, order))
+    await runWithFs(appendOrder(walPath, order))
 
     const raw = await readFile(walPath, "utf-8")
     const log = JSON.parse(raw)
@@ -69,7 +73,7 @@ describe("appendOrder", () => {
     })
 
     // Should treat corrupt file as empty WAL and write fresh
-    await Effect.runPromise(appendOrder(walPath, order))
+    await runWithFs(appendOrder(walPath, order))
 
     const raw = await readFile(walPath, "utf-8")
     const log = JSON.parse(raw)
@@ -91,7 +95,7 @@ describe("appendOrder", () => {
       timestamp: "2026-01-01",
     })
 
-    await Effect.runPromise(appendOrder(walPath, order))
+    await runWithFs(appendOrder(walPath, order))
 
     const raw = await readFile(walPath, "utf-8")
     const log = JSON.parse(raw)
@@ -108,7 +112,7 @@ describe("appendOrder", () => {
       timestamp: "2026-01-01",
     })
 
-    await Effect.runPromise(appendOrder(walPath, order))
+    await runWithFs(appendOrder(walPath, order))
 
     const raw = await readFile(walPath, "utf-8")
     const log = JSON.parse(raw)
@@ -129,7 +133,7 @@ describe("appendOrder", () => {
       timestamp: "2026-01-02",
     })
 
-    await Effect.runPromise(appendOrder(walPath, order))
+    await runWithFs(appendOrder(walPath, order))
 
     const raw = await readFile(walPath, "utf-8")
     const log = JSON.parse(raw)
@@ -140,13 +144,13 @@ describe("appendOrder", () => {
   test("appends multiple distinct orders", async () => {
     const walPath = resolve(tempDir, ".orders", "orders-next.json")
 
-    await Effect.runPromise(
+    await runWithFs(
       appendOrder(
         walPath,
         new Order({ id: "o1", ticketKey: "T-1", action: "claim", timestamp: "2026-01-01" }),
       ),
     )
-    await Effect.runPromise(
+    await runWithFs(
       appendOrder(
         walPath,
         new Order({ id: "o2", ticketKey: "T-1", action: "start", timestamp: "2026-01-02" }),
@@ -178,7 +182,7 @@ describe("promote", () => {
     })
     await writeFile(walPath, JSON.stringify(wal, null, 2), "utf-8")
 
-    const result = await Effect.runPromise(promote({ walPath, targetPath }))
+    const result = await runWithFs(promote({ walPath, targetPath }))
 
     expect(result.promoted).toBe(2)
     expect(result.total).toBe(2)
@@ -218,7 +222,7 @@ describe("promote", () => {
     })
     await writeFile(walPath, JSON.stringify(wal, null, 2), "utf-8")
 
-    const result = await Effect.runPromise(promote({ walPath, targetPath }))
+    const result = await runWithFs(promote({ walPath, targetPath }))
 
     expect(result.promoted).toBe(1) // Only o2 is new
     expect(result.total).toBe(2)
@@ -234,7 +238,7 @@ describe("promote", () => {
     // Write empty WAL
     await writeFile(walPath, JSON.stringify({ orders: [] }, null, 2), "utf-8")
 
-    const result = await Effect.runPromise(promote({ walPath, targetPath }))
+    const result = await runWithFs(promote({ walPath, targetPath }))
 
     expect(result.promoted).toBe(0)
     expect(result.total).toBe(0)
@@ -255,7 +259,7 @@ describe("promote", () => {
     await writeFile(walPath, JSON.stringify(wal, null, 2), "utf-8")
 
     // No target exists — should create it
-    const result = await Effect.runPromise(promote({ walPath, targetPath }))
+    const result = await runWithFs(promote({ walPath, targetPath }))
 
     expect(result.promoted).toBe(1)
     const targetRaw = await readFile(targetPath, "utf-8")
@@ -274,7 +278,7 @@ describe("promote", () => {
     await writeFile(walPath, "not json at all", "utf-8")
 
     // Should treat corrupt WAL as empty — no-op
-    const result = await Effect.runPromise(promote({ walPath, targetPath }))
+    const result = await runWithFs(promote({ walPath, targetPath }))
     expect(result.promoted).toBe(0)
     expect(result.total).toBe(0)
   })
@@ -298,7 +302,7 @@ describe("promote", () => {
     await writeFile(targetPath, "corrupt target", "utf-8")
 
     // Promotion should still work — treats corrupt target as empty
-    const result = await Effect.runPromise(promote({ walPath, targetPath }))
+    const result = await runWithFs(promote({ walPath, targetPath }))
     expect(result.promoted).toBe(1)
     expect(result.total).toBe(1)
 
@@ -316,7 +320,7 @@ describe("promote", () => {
     const targetPath = resolve(ordersDir, "orders.json")
 
     // No WAL file exists at all
-    const result = await Effect.runPromise(promote({ walPath, targetPath }))
+    const result = await runWithFs(promote({ walPath, targetPath }))
     expect(result.promoted).toBe(0)
     expect(result.total).toBe(0)
   })
@@ -345,7 +349,7 @@ describe("promote", () => {
     })
     await writeFile(walPath, JSON.stringify(wal, null, 2), "utf-8")
 
-    await Effect.runPromise(promote({ walPath, targetPath }))
+    await runWithFs(promote({ walPath, targetPath }))
 
     // Backup should be cleaned up
     const backupExists = await readFile(backupPath, "utf-8").then(
@@ -369,7 +373,7 @@ describe("promote", () => {
     })
     await writeFile(walPath, JSON.stringify(wal, null, 2), "utf-8")
 
-    await Effect.runPromise(promote({ walPath, targetPath }))
+    await runWithFs(promote({ walPath, targetPath }))
 
     const targetRaw = await readFile(targetPath, "utf-8")
     const targetLog = JSON.parse(targetRaw)
@@ -379,6 +383,74 @@ describe("promote", () => {
     const walRaw = await readFile(walPath, "utf-8")
     const walLog = JSON.parse(walRaw)
     expect(walLog.lastPromotedAt).toBeTruthy()
+  })
+
+  test("preserves target data when WAL has only duplicates", async () => {
+    const ordersDir = resolve(tempDir, ".orders")
+    await mkdir(ordersDir, { recursive: true })
+
+    const walPath = resolve(ordersDir, "orders-next.json")
+    const targetPath = resolve(ordersDir, "orders.json")
+
+    // Write existing target
+    const existing = new OrderLog({
+      orders: [
+        new Order({ id: "o1", ticketKey: "T-1", action: "claim", timestamp: "2026-01-01" }),
+        new Order({ id: "o2", ticketKey: "T-1", action: "start", timestamp: "2026-01-02" }),
+      ],
+    })
+    await writeFile(targetPath, JSON.stringify(existing, null, 2), "utf-8")
+
+    // WAL contains only duplicates
+    const wal = new OrderLog({
+      orders: [
+        new Order({ id: "o1", ticketKey: "T-1", action: "claim", timestamp: "2026-01-01" }),
+      ],
+    })
+    await writeFile(walPath, JSON.stringify(wal, null, 2), "utf-8")
+
+    const result = await runWithFs(promote({ walPath, targetPath }))
+
+    expect(result.promoted).toBe(0)
+    expect(result.total).toBe(2)
+
+    // Verify target still has both orders
+    const targetRaw = await readFile(targetPath, "utf-8")
+    const targetLog = JSON.parse(targetRaw)
+    expect(targetLog.orders).toHaveLength(2)
+  })
+
+  test("concurrent promotes do not lose data", async () => {
+    const ordersDir = resolve(tempDir, ".orders")
+    await mkdir(ordersDir, { recursive: true })
+
+    const walPath = resolve(ordersDir, "orders-next.json")
+    const targetPath = resolve(ordersDir, "orders.json")
+
+    // Write WAL with multiple orders
+    const wal = new OrderLog({
+      orders: [
+        new Order({ id: "o1", ticketKey: "T-1", action: "claim", timestamp: "2026-01-01" }),
+        new Order({ id: "o2", ticketKey: "T-1", action: "start", timestamp: "2026-01-02" }),
+        new Order({ id: "o3", ticketKey: "T-2", action: "claim", timestamp: "2026-01-03" }),
+      ],
+    })
+    await writeFile(walPath, JSON.stringify(wal, null, 2), "utf-8")
+
+    // Run two promotions in parallel — one should succeed, other should handle gracefully
+    const results = await Promise.allSettled([
+      runWithFs(promote({ walPath, targetPath })),
+      runWithFs(promote({ walPath, targetPath })),
+    ])
+
+    // At least one should succeed
+    const successes = results.filter((r) => r.status === "fulfilled")
+    expect(successes.length).toBeGreaterThanOrEqual(1)
+
+    // Target should have all 3 orders (no data loss)
+    const targetRaw = await readFile(targetPath, "utf-8")
+    const targetLog = JSON.parse(targetRaw)
+    expect(targetLog.orders.length).toBeGreaterThanOrEqual(3)
   })
 
   test("idempotent when promoted twice", async () => {
@@ -395,8 +467,8 @@ describe("promote", () => {
     })
     await writeFile(walPath, JSON.stringify(wal, null, 2), "utf-8")
 
-    await Effect.runPromise(promote({ walPath, targetPath }))
-    const result2 = await Effect.runPromise(promote({ walPath, targetPath }))
+    await runWithFs(promote({ walPath, targetPath }))
+    const result2 = await runWithFs(promote({ walPath, targetPath }))
 
     // Second promotion should be a no-op since WAL was truncated
     expect(result2.promoted).toBe(0)

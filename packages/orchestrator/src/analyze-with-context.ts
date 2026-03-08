@@ -41,20 +41,12 @@ if (import.meta.main) {
 
   const { Effect } = await import("effect")
   const { analyzeWithContextPipeline } = await import("./effect/pipelines/analyze.js")
-  const { OrchestratorLive } = await import("./effect/runtime.js")
+  const { OrchestratorLive, runCli } = await import("./effect/runtime.js")
 
-  await Effect.runPromise(
+  runCli(
     analyzeWithContextPipeline(opts).pipe(
       Effect.provide(OrchestratorLive),
-      Effect.catchAll((error: any) =>
-        Effect.sync(() => {
-          console.error(`[dalinar] ${error._tag}: ${error.message}`)
-          process.exitCode = 1
-        }),
-      ),
+      Effect.asVoid,
     ),
-  ).catch((e) => {
-    console.error("[dalinar] Unexpected error:", e)
-    process.exitCode = 1
-  })
+  )
 }

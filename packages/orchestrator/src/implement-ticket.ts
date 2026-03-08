@@ -18,10 +18,6 @@
  *   bun run packages/orchestrator/src/implement-ticket.ts PROJ-123 --worktree
  */
 
-import { Effect } from "effect"
-import { implementTicketPipeline } from "./effect/pipelines/implement.js"
-import { OrchestratorLive } from "./effect/runtime.js"
-
 export { implementTicketPipeline } from "./effect/pipelines/implement.js"
 export { postImplementExtractPipeline } from "./effect/pipelines/implement.js"
 
@@ -42,22 +38,32 @@ if (import.meta.main) {
     root: process.cwd(),
   }
 
-  const context = await Effect.runPromise(
-    implementTicketPipeline(opts).pipe(Effect.provide(OrchestratorLive)),
-  )
+  const { Effect } = await import("effect")
+  const { implementTicketPipeline } = await import("./effect/pipelines/implement.js")
+  const { OrchestratorLive, runCli } = await import("./effect/runtime.js")
 
-  console.log("\n" + "=".repeat(60))
-  console.log(`## Implementation Context for ${context.ticketKey}\n`)
-  if (context.priorContext) console.log(context.priorContext)
-  if (context.analysisMarkdown) {
-    console.log("## Sazed Analysis\n")
-    console.log(context.analysisMarkdown)
-  }
-  if (context.worktreePath) {
-    console.log(`## Worktree\n`)
-    console.log(`Path: ${context.worktreePath}`)
-    console.log(`Branch: ${context.worktreeBranch}`)
-    console.log(`\nSwitch to worktree: cd ${context.worktreePath}`)
-  }
-  console.log("\n" + "=".repeat(60))
+  runCli(
+    implementTicketPipeline(opts).pipe(
+      Effect.tap((context) =>
+        Effect.sync(() => {
+          console.log("\n" + "=".repeat(60))
+          console.log(`## Implementation Context for ${context.ticketKey}\n`)
+          if (context.priorContext) console.log(context.priorContext)
+          if (context.analysisMarkdown) {
+            console.log("## Sazed Analysis\n")
+            console.log(context.analysisMarkdown)
+          }
+          if (context.worktreePath) {
+            console.log(`## Worktree\n`)
+            console.log(`Path: ${context.worktreePath}`)
+            console.log(`Branch: ${context.worktreeBranch}`)
+            console.log(`\nSwitch to worktree: cd ${context.worktreePath}`)
+          }
+          console.log("\n" + "=".repeat(60))
+        }),
+      ),
+      Effect.provide(OrchestratorLive),
+      Effect.asVoid,
+    ),
+  )
 }

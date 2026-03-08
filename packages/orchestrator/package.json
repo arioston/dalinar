@@ -15,6 +15,7 @@
     "hoid": "workspace:*"
   },
   "devDependencies": {
+    "@effect/platform-node": "^0.104.1",
     "@types/bun": "latest"
   }
 }

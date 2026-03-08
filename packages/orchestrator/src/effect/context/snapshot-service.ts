@@ -1,4 +1,4 @@
-import { Context, Effect, Layer, Ref } from "effect"
+import { Clock, Context, Effect, Layer, Ref } from "effect"
 import { contentHash } from "./hashing.js"
 import type { MiseSnapshot, BacklogItem, CapacitySnapshot, HistoryEntry } from "./schema.js"
 import { MiseSnapshot as MiseSnapshotClass } from "./schema.js"
@@ -28,13 +28,13 @@ const makeSnapshotService = Effect.gen(function* () {
   const lastHashRef = yield* Ref.make("")
   const cacheRef = yield* Ref.make<MiseSnapshot | null>(null)
 
-  const buildSnapshot = (input: SnapshotInput): MiseSnapshot => {
+  const buildSnapshot = (input: SnapshotInput, timestamp: string): MiseSnapshot => {
     const hash = contentHash({
       backlog: input.backlog,
       capacity: input.capacity,
     })
     return new MiseSnapshotClass({
-      timestamp: new Date().toISOString(),
+      timestamp,
       contentHash: hash,
       backlog: [...input.backlog],
       capacity: input.capacity,
@@ -56,7 +56,10 @@ const makeSnapshotService = Effect.gen(function* () {
         if (cached !== null) return cached
       }
 
-      const snapshot = buildSnapshot(input)
+      const timestamp = yield* Clock.currentTimeMillis.pipe(
+        Effect.map((ms) => new Date(ms).toISOString()),
+      )
+      const snapshot = buildSnapshot(input, timestamp)
       yield* Ref.set(lastHashRef, hash)
       yield* Ref.set(cacheRef, snapshot)
       return snapshot

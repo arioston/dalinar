@@ -5,6 +5,7 @@ import { discoverSkills, validateDependencies } from "./skills.js";
 const SKILLS_DIR = join(import.meta.dir, "../../../skills");
 
 const EXPECTED_SKILLS = [
+  "adversarial-review",
   "calendar",
   "dialectic",
   "gsap-react",
@@ -14,13 +15,16 @@ const EXPECTED_SKILLS = [
   "jasnah-query",
   "jasnah-search-memory",
   "jira",
+  "meditate",
   "reducing-entropy",
+  "refine",
+  "ruminate",
   "sanity-tools",
   "using-git-worktrees",
 ] as const;
 
 describe("discoverSkills", () => {
-  test("discovers all 12 skills from skills/ directory", async () => {
+  test("discovers all 16 skills from skills/ directory", async () => {
     const registry = await discoverSkills(SKILLS_DIR);
 
     expect(registry.errors).toEqual([]);

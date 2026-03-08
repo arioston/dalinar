@@ -1,17 +1,93 @@
-import { Context, Effect, Layer, Schema } from "effect"
-import { $ } from "bun"
-import { resolve } from "path"
+import { Context, Duration, Effect, Layer, Schema } from "effect"
 import { JasnahError, SazedError, HoidError } from "./errors.js"
 import { SubprocessService } from "./subprocess.js"
-import { resolveDalinarRoot } from "./paths.js"
 import {
-  SAZED_CONTRACT_VERSION,
+  resolveJasnahScript,
+  resolveSazedRoot,
+  resolveSazedCli,
+  resolveHoidScript,
+} from "./paths.js"
+import {
   SazedAnalyzeOutput,
   SazedSyncOutput,
   SazedStatusOutput,
   SazedNotesListOutput,
+  SAZED_CONTRACT_VERSION,
   checkVersionCompat,
 } from "@dalinar/protocol"
+import type {
+  CalendarListOutput,
+  FreeSlotsOutput,
+  CalendarEvent,
+  ConflictsOutput,
+} from "./hoid-schemas.js"
+import {
+  CalendarListOutput as CalendarListSchema,
+  FreeSlotsOutput as FreeSlotsSchema,
+  CalendarEvent as CalendarEventSchema,
+  ConflictsOutput as ConflictsSchema,
+} from "./hoid-schemas.js"
+
+// ── JSON extraction ──────────────────────────────────────────────
+
+/**
+ * Extract the first complete JSON object or array from a string that
+ * may contain leading/trailing non-JSON content (e.g. log lines
+ * leaking to stdout in --json mode).
+ *
+ * Tries each candidate `{` or `[` position and returns the first
+ * balanced extraction that parses as valid JSON.
+ */
+export function extractJsonEnvelope(raw: string): string {
+  const trimmed = raw.trim()
+
+  // Fast path: already clean JSON
+  if (trimmed.startsWith("{") || trimmed.startsWith("[")) {
+    try { JSON.parse(trimmed); return trimmed } catch { /* fall through */ }
+  }
+
+  // Scan for each potential JSON start
+  for (let pos = 0; pos < trimmed.length; pos++) {
+    const ch = trimmed[pos]
+    if (ch !== "{" && ch !== "[") continue
+
+    const candidate = extractBalanced(trimmed, pos)
+    if (candidate !== null) {
+      try { JSON.parse(candidate); return candidate } catch { /* try next */ }
+    }
+  }
+
+  return trimmed
+}
+
+function extractBalanced(s: string, start: number): string | null {
+  let depth = 0
+  let inString = false
+  let escape = false
+
+  for (let i = start; i < s.length; i++) {
+    const ch = s[i]
+    if (escape) { escape = false; continue }
+    if (ch === "\\") { escape = true; continue }
+    if (ch === '"') { inString = !inString; continue }
+    if (inString) continue
+    if (ch === "{" || ch === "[") depth++
+    if (ch === "}" || ch === "]") depth--
+    if (depth === 0) return s.slice(start, i + 1)
+  }
+
+  return null
+}
+
+// ── Sazed Envelope schema factory ────────────────────────────────
+
+export const SazedEnvelope = <A extends Schema.Schema.AnyNoContext>(dataSchema: A) =>
+  Schema.parseJson(
+    Schema.Struct({
+      contractVersion: Schema.String,
+      data: dataSchema,
+    }),
+  )
 
 // ── Jasnah Service ─────────────────────────────────────────────────
 
@@ -64,15 +140,6 @@ export class JasnahService extends Context.Tag("@dalinar/JasnahService")<
   JasnahServiceShape
 >() {}
 
-function resolveJasnahRoot(): string {
-  return (
-    process.env.JASNAH_ROOT ??
-    resolve(
-      process.env.XDG_DATA_HOME ?? resolve(process.env.HOME!, ".local/share"),
-      "jasnah",
-    )
-  )
-}
 
 function parseSearchOutput(stdout: string): MemorySearchResult[] {
   if (!stdout) return []
@@ -101,8 +168,7 @@ const makeJasnah = Effect.gen(function* () {
 
   const searchMemories: JasnahServiceShape["searchMemories"] = (opts) =>
     Effect.gen(function* () {
-      const jasnahRoot = resolveJasnahRoot()
-      const scriptPath = resolve(jasnahRoot, "scripts/search-memory.ts")
+      const scriptPath = resolveJasnahScript("search-memory.ts")
 
       const args: string[] = [opts.query]
       if (opts.type) args.push("--type", opts.type)
@@ -113,7 +179,7 @@ const makeJasnah = Effect.gen(function* () {
       if (opts.root) args.push("--root", opts.root)
 
       const result = yield* subprocess
-        .run(scriptPath, { args, nothrow: true })
+        .run(scriptPath, { args, nothrow: true, timeout: "15 seconds" })
         .pipe(
           Effect.mapError(
             (e) =>
@@ -179,36 +245,30 @@ const makeJasnah = Effect.gen(function* () {
       if (entries.length === 0)
         return { success: true, output: "No entries to extract" }
 
-      const jasnahRoot = resolveJasnahRoot()
-      const scriptPath = resolve(jasnahRoot, "scripts/extract-inline.ts")
+      const scriptPath = resolveJasnahScript("extract-inline.ts")
 
       const args: string[] = []
       if (opts.root) args.push("--root", opts.root)
       if (opts.source) args.push("--source", opts.source)
       if (opts.dryRun) args.push("--dry-run")
 
-      const json = JSON.stringify(entries)
-      // Piped stdin requires direct shell access (can't route through SubprocessService)
-      const result = yield* Effect.tryPromise({
-        try: async () => {
-          const proc = await $`echo ${json} | bun run ${scriptPath} ${args}`
-            .quiet()
-            .nothrow()
-            .env({ ...process.env })
-
-          return {
-            stdout: proc.stdout.toString().trim(),
-            stderr: proc.stderr.toString().trim(),
-            exitCode: proc.exitCode,
-          }
-        },
-        catch: (error) =>
-          new JasnahError({
-            message: "Memory extraction failed",
-            operation: "extractMemories",
-            cause: error,
-          }),
-      })
+      const result = yield* subprocess
+        .run(scriptPath, {
+          args,
+          stdin: JSON.stringify(entries),
+          nothrow: true,
+          timeout: "30 seconds",
+        })
+        .pipe(
+          Effect.mapError(
+            (e) =>
+              new JasnahError({
+                message: "Memory extraction failed",
+                operation: "extractMemories",
+                cause: e,
+              }),
+          ),
+        )
 
       if (result.exitCode !== 0) {
         yield* Effect.logWarning(
@@ -283,23 +343,16 @@ export class SazedService extends Context.Tag("@dalinar/SazedService")<
   SazedServiceShape
 >() {}
 
-function resolveSazedRoot(): string {
-  return resolve(resolveDalinarRoot(), "modules/sazed")
-}
-
-function sazedCli(): string {
-  return resolve(resolveSazedRoot(), "packages/cli/src/main.ts")
-}
-
 const makeSazed = Effect.gen(function* () {
   const subprocess = yield* SubprocessService
 
   const runSazed = (args: string[], env?: Record<string, string | undefined>) =>
     subprocess
-      .run(sazedCli(), {
+      .run(resolveSazedCli(), {
         args,
         cwd: resolveSazedRoot(),
         nothrow: true,
+        timeout: "120 seconds",
         env,
       })
       .pipe(
@@ -312,29 +365,22 @@ const makeSazed = Effect.gen(function* () {
         ),
       )
 
-  const decodeSazed = <A, I, R>(schema: Schema.Schema<A, I, R>) =>
+  const decodeSazed = <A, I>(schema: Schema.Schema<A, I, never>) =>
     (stdout: string) => {
-      const Envelope = Schema.parseJson(
-        Schema.Struct({
-          contractVersion: Schema.String,
-          data: schema,
-        }),
-      )
-      return Schema.decodeUnknown(Envelope)(stdout).pipe(
+      const Envelope = SazedEnvelope(schema)
+      const cleaned = extractJsonEnvelope(stdout)
+      return Schema.decodeUnknown(Envelope)(cleaned).pipe(
         Effect.tap((envelope) => {
-          const compat = checkVersionCompat(
-            SAZED_CONTRACT_VERSION,
-            envelope.contractVersion,
-          )
+          const compat = checkVersionCompat(SAZED_CONTRACT_VERSION, envelope.contractVersion)
           return compat === "major-mismatch"
             ? Effect.fail(
                 new SazedError({
-                  message: `Incompatible Sazed contract version: expected ${SAZED_CONTRACT_VERSION}, got ${envelope.contractVersion}`,
+                  message: `Incompatible Sazed contract version: ${envelope.contractVersion}`,
                 }),
               )
             : compat === "minor-drift"
               ? Effect.logWarning(
-                  `Sazed contract version drift: expected ${SAZED_CONTRACT_VERSION}, got ${envelope.contractVersion}`,
+                  `Sazed contract version drift: ${envelope.contractVersion} (expected ${SAZED_CONTRACT_VERSION})`,
                 )
               : Effect.void
         }),
@@ -348,84 +394,46 @@ const makeSazed = Effect.gen(function* () {
       )
     }
 
-  const analyze: SazedServiceShape["analyze"] = (opts) =>
-    Effect.gen(function* () {
-      const args: string[] = ["analyze", opts.epicKey, "--json"]
-      if (opts.force) args.push("--force")
-      if (opts.notes) args.push("--notes")
-      if (opts.noMap) args.push("--no-map")
-      if (opts.noCache) args.push("--no-cache")
-      if (opts.forensics) args.push("--forensics")
+  const runAndDecode = <A, I>(
+    args: string[],
+    schema: Schema.Schema<A, I, never>,
+    errorContext: string,
+    opts?: { epicKey?: string; env?: Record<string, string | undefined> | undefined },
+  ) =>
+    runSazed(args, opts?.env).pipe(
+      Effect.filterOrFail(
+        (r) => r.exitCode === 0,
+        (r) => new SazedError({ message: `${errorContext} failed: ${r.stderr}`, epicKey: opts?.epicKey }),
+      ),
+      Effect.flatMap((r) => decodeSazed(schema)(r.stdout)),
+    )
 
-      const env = opts.context ? { DALINAR_CONTEXT: opts.context } : undefined
-      const result = yield* runSazed(args, env)
+  const analyze: SazedServiceShape["analyze"] = (opts) => {
+    const args: string[] = ["analyze", opts.epicKey, "--json"]
+    if (opts.force) args.push("--force")
+    if (opts.notes) args.push("--notes")
+    if (opts.noMap) args.push("--no-map")
+    if (opts.noCache) args.push("--no-cache")
+    if (opts.forensics) args.push("--forensics")
 
-      if (result.exitCode !== 0) {
-        return yield* new SazedError({
-          message: `Analysis failed: ${result.stderr}`,
-          epicKey: opts.epicKey,
-        })
-      }
+    const env = opts.context ? { DALINAR_CONTEXT: opts.context } : undefined
+    return runAndDecode(args, SazedAnalyzeOutput, "Analysis", { epicKey: opts.epicKey, env })
+  }
 
-      return yield* decodeSazed(SazedAnalyzeOutput)(result.stdout)
-    })
-
-  const syncToJira: SazedServiceShape["syncToJira"] = (opts) =>
-    Effect.gen(function* () {
-      const args: string[] = ["sync", opts.epicKey, "--json"]
-      if (opts.dryRun) args.push("--dry-run")
-
-      const result = yield* runSazed(args)
-
-      if (result.exitCode !== 0) {
-        return yield* new SazedError({
-          message: `Sync failed: ${result.stderr}`,
-          epicKey: opts.epicKey,
-        })
-      }
-
-      return yield* decodeSazed(SazedSyncOutput)(result.stdout)
-    })
+  const syncToJira: SazedServiceShape["syncToJira"] = (opts) => {
+    const args: string[] = ["sync", opts.epicKey, "--json"]
+    if (opts.dryRun) args.push("--dry-run")
+    return runAndDecode(args, SazedSyncOutput, "Sync", { epicKey: opts.epicKey })
+  }
 
   const checkStatus: SazedServiceShape["checkStatus"] = (epicKey) =>
-    Effect.gen(function* () {
-      const result = yield* runSazed(["status", epicKey, "--json"])
-
-      if (result.exitCode !== 0) {
-        return yield* new SazedError({
-          message: `Status check failed: ${result.stderr}`,
-          epicKey,
-        })
-      }
-
-      return yield* decodeSazed(SazedStatusOutput)(result.stdout)
-    })
+    runAndDecode(["status", epicKey, "--json"], SazedStatusOutput, "Status check", { epicKey })
 
   const listNotes: SazedServiceShape["listNotes"] = () =>
-    Effect.gen(function* () {
-      const result = yield* runSazed(["notes", "list", "--json"])
-
-      if (result.exitCode !== 0) {
-        return yield* new SazedError({
-          message: `Notes list failed: ${result.stderr}`,
-        })
-      }
-
-      return yield* decodeSazed(SazedNotesListOutput)(result.stdout)
-    })
+    runAndDecode(["notes", "list", "--json"], SazedNotesListOutput, "Notes list")
 
   const searchNotes: SazedServiceShape["searchNotes"] = (query) =>
-    Effect.gen(function* () {
-      const result = yield* runSazed(["notes", "search", query, "--json"])
-
-      if (result.exitCode !== 0) {
-        return yield* new SazedError({
-          message: `Notes search failed: ${result.stderr}`,
-        })
-      }
-
-      return yield* decodeSazed(SazedNotesListOutput)(result.stdout)
-    })
+    runAndDecode(["notes", "search", query, "--json"], SazedNotesListOutput, "Notes search")
 
   return {
     analyze,
@@ -483,19 +491,19 @@ export interface ConflictsOptions {
 export interface HoidServiceShape {
   readonly listEvents: (
     opts?: CalendarListOptions,
-  ) => Effect.Effect<string, HoidError>
+  ) => Effect.Effect<CalendarListOutput, HoidError>
   readonly freeSlots: (
     opts?: FreeSlotsOptions,
-  ) => Effect.Effect<string, HoidError>
+  ) => Effect.Effect<FreeSlotsOutput, HoidError>
   readonly createEvent: (
     opts: CreateEventOptions,
-  ) => Effect.Effect<string, HoidError>
+  ) => Effect.Effect<CalendarEvent, HoidError>
   readonly moveEvent: (
     opts: MoveEventOptions,
-  ) => Effect.Effect<string, HoidError>
+  ) => Effect.Effect<CalendarEvent, HoidError>
   readonly conflicts: (
     opts?: ConflictsOptions,
-  ) => Effect.Effect<string, HoidError>
+  ) => Effect.Effect<ConflictsOutput, HoidError>
 }
 
 export class HoidService extends Context.Tag("@dalinar/HoidService")<
@@ -503,26 +511,31 @@ export class HoidService extends Context.Tag("@dalinar/HoidService")<
   HoidServiceShape
 >() {}
 
-function resolveHoidRoot(): string {
-  return process.env.HOID_ROOT ?? resolve(resolveDalinarRoot(), "modules/hoid")
-}
-
-function hoidCliScript(name: string): string {
-  return resolve(resolveHoidRoot(), `packages/cli/src/${name}.ts`)
-}
-
 const makeHoid = Effect.gen(function* () {
   const subprocess = yield* SubprocessService
 
-  const runHoid = (script: string, args: string[]) =>
+  const runHoid = (script: string, args: string[], timeout: Duration.DurationInput = "15 seconds") =>
     subprocess
-      .run(hoidCliScript(script), { args, nothrow: true })
+      .run(resolveHoidScript(script), { args, nothrow: true, timeout })
       .pipe(
         Effect.mapError(
           (e) =>
             new HoidError({
               message: `Hoid command failed: ${e.message}`,
               operation: script,
+              cause: e,
+            }),
+        ),
+      )
+
+  const decodeHoid = <A, I>(schema: Schema.Schema<A, I, never>, operation: string) =>
+    (stdout: string) =>
+      Schema.decodeUnknown(Schema.parseJson(schema))(extractJsonEnvelope(stdout)).pipe(
+        Effect.mapError(
+          (e) =>
+            new HoidError({
+              message: `Failed to decode Hoid ${operation} output: ${e.message}`,
+              operation,
               cause: e,
             }),
         ),
@@ -539,94 +552,67 @@ const makeHoid = Effect.gen(function* () {
     return args
   }
 
+  const runAndDecode = <A, I>(
+    script: string,
+    args: string[],
+    schema: Schema.Schema<A, I, never>,
+    operation: string,
+    opts?: { timeout?: Duration.DurationInput },
+  ) =>
+    runHoid(script, args, opts?.timeout).pipe(
+      Effect.filterOrFail(
+        (r) => r.exitCode === 0,
+        (r) => new HoidError({ message: `${operation} failed: ${r.stderr}`, operation }),
+      ),
+      Effect.flatMap((r) => decodeHoid(schema, operation)(r.stdout)),
+    )
+
   const listEvents: HoidServiceShape["listEvents"] = (opts = {}) =>
-    Effect.gen(function* () {
-      const result = yield* runHoid("calendar-list", buildCalendarArgs(opts))
-      if (result.exitCode !== 0) {
-        yield* Effect.logWarning(`Hoid listEvents failed: ${result.stderr}`)
-        return "[]"
-      }
-      return result.stdout
-    })
+    runAndDecode("calendar-list", buildCalendarArgs(opts), CalendarListSchema, "listEvents")
 
-  const freeSlots: HoidServiceShape["freeSlots"] = (opts = {}) =>
-    Effect.gen(function* () {
-      const args = buildCalendarArgs(opts)
-      if (opts?.minDuration)
-        args.push("--min-duration", String(opts.minDuration))
-      if (opts?.workingHours)
-        args.push("--working-hours", opts.workingHours)
+  const freeSlots: HoidServiceShape["freeSlots"] = (opts = {}) => {
+    const args = buildCalendarArgs(opts)
+    if (opts?.minDuration)
+      args.push("--min-duration", String(opts.minDuration))
+    if (opts?.workingHours)
+      args.push("--working-hours", opts.workingHours)
+    return runAndDecode("calendar-free-slots", args, FreeSlotsSchema, "freeSlots")
+  }
 
-      const result = yield* runHoid("calendar-free-slots", args)
-      if (result.exitCode !== 0) {
-        yield* Effect.logWarning(`Hoid freeSlots failed: ${result.stderr}`)
-        return "[]"
-      }
-      return result.stdout
-    })
+  const createEvent: HoidServiceShape["createEvent"] = (opts) => {
+    const args: string[] = [
+      "--json",
+      "--title",
+      opts.title,
+      "--start",
+      opts.start,
+      "--end",
+      opts.end,
+    ]
+    if (opts.account) args.push("--account", opts.account)
+    if (opts.description) args.push("--description", opts.description)
+    if (opts.location) args.push("--location", opts.location)
+    return runAndDecode("calendar-create", args, CalendarEventSchema, "createEvent", { timeout: "30 seconds" })
+  }
 
-  const createEvent: HoidServiceShape["createEvent"] = (opts) =>
-    Effect.gen(function* () {
-      const args: string[] = [
-        "--json",
-        "--title",
-        opts.title,
-        "--start",
-        opts.start,
-        "--end",
-        opts.end,
-      ]
-      if (opts.account) args.push("--account", opts.account)
-      if (opts.description) args.push("--description", opts.description)
-      if (opts.location) args.push("--location", opts.location)
-
-      const result = yield* runHoid("calendar-create", args)
-      if (result.exitCode !== 0) {
-        return yield* new HoidError({
-          message: `createEvent failed: ${result.stderr}`,
-          operation: "createEvent",
-        })
-      }
-      return result.stdout
-    })
-
-  const moveEvent: HoidServiceShape["moveEvent"] = (opts) =>
-    Effect.gen(function* () {
-      const args: string[] = [
-        "--json",
-        "--event-id",
-        opts.eventId,
-        "--source",
-        opts.source,
-        "--new-start",
-        opts.newStart,
-        "--new-end",
-        opts.newEnd,
-      ]
-      if (opts.target) args.push("--target", opts.target)
-
-      const result = yield* runHoid("calendar-move", args)
-      if (result.exitCode !== 0) {
-        return yield* new HoidError({
-          message: `moveEvent failed: ${result.stderr}`,
-          operation: "moveEvent",
-        })
-      }
-      return result.stdout
-    })
+  const moveEvent: HoidServiceShape["moveEvent"] = (opts) => {
+    const args: string[] = [
+      "--json",
+      "--event-id",
+      opts.eventId,
+      "--source",
+      opts.source,
+      "--new-start",
+      opts.newStart,
+      "--new-end",
+      opts.newEnd,
+    ]
+    if (opts.target) args.push("--target", opts.target)
+    return runAndDecode("calendar-move", args, CalendarEventSchema, "moveEvent", { timeout: "30 seconds" })
+  }
 
   const conflicts: HoidServiceShape["conflicts"] = (opts = {}) =>
-    Effect.gen(function* () {
-      const result = yield* runHoid(
-        "calendar-conflicts",
-        buildCalendarArgs(opts),
-      )
-      if (result.exitCode !== 0) {
-        yield* Effect.logWarning(`Hoid conflicts failed: ${result.stderr}`)
-        return "[]"
-      }
-      return result.stdout
-    })
+    runAndDecode("calendar-conflicts", buildCalendarArgs(opts), ConflictsSchema, "conflicts")
 
   return {
     listEvents,

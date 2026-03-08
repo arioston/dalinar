@@ -53,7 +53,7 @@ Bun monorepo. Orchestrates Jasnah (memory), Sazed (planning), and Hoid (calendar
 - `modules/jasnah/` — Memory extraction and retrieval (git submodule)
 - `modules/sazed/` — Epic analysis and task decomposition (git submodule)
 - `modules/hoid/` — Calendar operations (git submodule)
-- `skills/` — 12 agent skills (local + symlinks into submodules)
+- `skills/` — 16 agent skills (local + symlinks into submodules)
 
 ### Effect.ts Layer (packages/orchestrator/src/effect/)
 
@@ -75,8 +75,12 @@ Tests: `bun test packages/orchestrator/src/effect/`
 | `jira` | local | Full ticket lifecycle (fetch → implement → PR → comment) |
 | `reducing-entropy` | local | Codebase size minimization |
 | `using-git-worktrees` | local | Workspace isolation for feature work |
+| `adversarial-review` | hoid | Cross-model adversarial code/plan review |
 | `gsap-react` | hoid | GSAP + React animation patterns |
 | `image-to-webp` | hoid | Image conversion via cwebp |
+| `meditate` | hoid | Audit and evolve project memory store |
+| `refine` | hoid | Sharpen vague todos into actionable prompts |
+| `ruminate` | hoid | Mine past conversations for uncaptured knowledge |
 | `sanity-tools` | hoid | Sanity CMS operations |
 | `jasnah-debug-trace` | jasnah | Structured debugging (Agans' 9 Rules) |
 | `jasnah-export-memory` | jasnah | Transcript-based memory export |

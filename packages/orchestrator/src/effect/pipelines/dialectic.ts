@@ -3,43 +3,14 @@ import { JasnahService } from "../services.js"
 import {
   buildPositionPrompt,
   buildSynthesisPrompt,
+  generateConstraints,
   type DialecticInput,
-} from "../../dialectic.js"
+} from "../types/dialectic.js"
 
 export interface DialecticPipelineResult {
   constraints: { constraintA: string; constraintB: string }
   prompts: { positionA: string; positionB: string; synthesis: string }
   priorContext: string
-}
-
-function generateConstraints(input: DialecticInput): {
-  constraintA: string
-  constraintB: string
-} {
-  if (input.constraintA && input.constraintB) {
-    return { constraintA: input.constraintA, constraintB: input.constraintB }
-  }
-
-  const vsMatch = input.question.match(/(.+?)\s+vs\.?\s+(.+?)[\?.]?$/i)
-  if (vsMatch) {
-    return {
-      constraintA: `Assume we proceed with: ${vsMatch[1].trim()}`,
-      constraintB: `Assume we proceed with: ${vsMatch[2].trim()}`,
-    }
-  }
-
-  const shouldMatch = input.question.match(/should\s+we\s+(.+?)[\?.]?$/i)
-  if (shouldMatch) {
-    return {
-      constraintA: `Assume we DO ${shouldMatch[1].trim()}`,
-      constraintB: `Assume we DO NOT ${shouldMatch[1].trim()} and find an alternative approach`,
-    }
-  }
-
-  return {
-    constraintA: `Argue IN FAVOR of the proposed change: ${input.question}`,
-    constraintB: `Argue AGAINST the proposed change and propose an alternative: ${input.question}`,
-  }
 }
 
 // ── Effect pipeline ────────────────────────────────────────────────

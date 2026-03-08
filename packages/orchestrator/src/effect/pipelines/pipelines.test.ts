@@ -8,7 +8,7 @@ import { dialecticPipeline } from "./dialectic.js"
 import { analyzeWithContextPipeline } from "./analyze.js"
 import { implementTicketPipeline } from "./implement.js"
 import { auditPipeline, formatReport, type AuditReport } from "./audit.js"
-import type { SprintReflection } from "../../reflect.js"
+import type { SprintReflection } from "../types/reflect.js"
 
 // ── Test Layers ───────────────────────────────────────────────────
 

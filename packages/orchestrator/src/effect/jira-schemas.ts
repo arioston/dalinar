@@ -11,8 +11,3 @@ export class JiraTask extends Schema.Class<JiraTask>("JiraTask")({
   parentKey: Schema.optional(Schema.String),
 }) {}
 
-export class JiraEpic extends Schema.Class<JiraEpic>("JiraEpic")({
-  key: Schema.String,
-  summary: Schema.String,
-  status: Schema.String,
-}) {}

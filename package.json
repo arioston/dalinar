@@ -9,7 +9,16 @@
     "modules/sazed/packages/*",
     "modules/hoid/packages/*"
   ],
+  "scripts": {
+    "test:unit": "bun test packages/",
+    "test:contract": "RUN_EXTERNAL_TESTS=1 bun test packages/orchestrator/src/effect/sazed-contract.test.ts",
+    "test:all": "RUN_EXTERNAL_TESTS=1 bun test packages/",
+    "ci:clean-check": "bash scripts/ci-clean-check.sh"
+  },
   "devDependencies": {
     "@types/bun": "^1.3.9"
+  },
+  "overrides": {
+    "effect": "^3.19.19"
   }
 }

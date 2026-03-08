@@ -5,6 +5,7 @@ export class SubprocessError extends Schema.TaggedError<SubprocessError>()("Subp
   command: Schema.optional(Schema.String),
   exitCode: Schema.optional(Schema.Number),
   stderr: Schema.optional(Schema.String),
+  category: Schema.optional(Schema.Literal("not-found", "auth", "timeout", "crash", "unknown")),
   cause: Schema.optional(Schema.Unknown),
 }) {}
 
@@ -55,4 +56,12 @@ export class JiraError extends Schema.TaggedError<JiraError>()("JiraError", {
   operation: Schema.optional(Schema.String),
   key: Schema.optional(Schema.String),
   cause: Schema.optional(Schema.Unknown),
+}) {}
+
+export class ConfigurationError extends Schema.TaggedError<ConfigurationError>()("ConfigurationError", {
+  message: Schema.String,
+  variable: Schema.optional(Schema.String),
+  currentValue: Schema.optional(Schema.String),
+  supportedValues: Schema.optional(Schema.Array(Schema.String)),
+  remediation: Schema.optional(Schema.String),
 }) {}

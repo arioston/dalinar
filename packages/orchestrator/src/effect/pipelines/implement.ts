@@ -13,9 +13,9 @@ export interface ImplementOptions {
 export interface ImplementationContext {
   ticketKey: string
   priorContext: string
-  analysisMarkdown?: string
-  worktreePath?: string
-  worktreeBranch?: string
+  analysisMarkdown?: string | undefined
+  worktreePath?: string | undefined
+  worktreeBranch?: string | undefined
 }
 
 const createWorktree = (ticketKey: string, root: string) =>
@@ -90,9 +90,8 @@ export const implementTicketPipeline = (opts: ImplementOptions) =>
       yield* Effect.log("  No prior context found")
     }
 
-    const context: ImplementationContext = { ticketKey, priorContext }
-
     // Stage 2: Optionally run Sazed analysis
+    let analysisMarkdown: string | undefined
     if (opts.shouldAnalyze) {
       yield* Effect.log(`Step 2: Running Sazed analysis for ${ticketKey}...`)
       const analysisResult = yield* sazed.analyze({
@@ -109,7 +108,7 @@ export const implementTicketPipeline = (opts: ImplementOptions) =>
         ),
       )
       if (analysisResult.success) {
-        context.analysisMarkdown = analysisResult.output.markdown
+        analysisMarkdown = analysisResult.output.markdown
         yield* Effect.log(
           `  Analysis complete (${analysisResult.output.markdown.length} chars)`,
         )
@@ -117,12 +116,14 @@ export const implementTicketPipeline = (opts: ImplementOptions) =>
     }
 
     // Stage 3: Optionally create worktree
+    let worktreePath: string | undefined
+    let worktreeBranch: string | undefined
     if (opts.useWorktree) {
       yield* Effect.log(`Step 3: Creating git worktree for ${ticketKey}...`)
       const wt = yield* createWorktree(ticketKey, root)
       if (wt) {
-        context.worktreePath = wt.path
-        context.worktreeBranch = wt.branch
+        worktreePath = wt.path
+        worktreeBranch = wt.branch
         yield* Effect.log(
           `  Worktree created at ${wt.path} (branch: ${wt.branch})`,
         )
@@ -133,7 +134,7 @@ export const implementTicketPipeline = (opts: ImplementOptions) =>
       }
     }
 
-    return context
+    return { ticketKey, priorContext, analysisMarkdown, worktreePath, worktreeBranch }
   }).pipe(Effect.withSpan("implement-ticket"))
 
 export const postImplementExtractPipeline = (
