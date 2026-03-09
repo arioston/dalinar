@@ -415,7 +415,7 @@ const makeSazed = Effect.gen(function* () {
     runSazed(args, opts?.env).pipe(
       Effect.filterOrFail(
         (r) => r.exitCode === 0,
-        (r) => new SazedError({ message: `${errorContext} failed: ${r.stderr}`, epicKey: opts?.epicKey }),
+        (r) => new SazedError({ message: `${errorContext} failed: ${r.stderr || r.stdout || r.exitCode}`, epicKey: opts?.epicKey }),
       ),
       Effect.flatMap((r) => decodeSazed(schema)(r.stdout)),
     )

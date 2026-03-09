@@ -11,9 +11,9 @@ export type SupportedProvider = (typeof SUPPORTED_PROVIDERS)[number]
 
 export const SUPPORTED_MODELS: Record<SupportedProvider, readonly string[]> = {
   "anthropic": ["claude-sonnet-4-20250514", "claude-3-5-sonnet-20241022"],
-  "openai": ["gpt-4o", "gpt-4o-mini", "gpt-5.2"],
-  "copilot": ["claude-sonnet-4-20250514", "gpt-4o", "gpt-5.2"],
-  "github-copilot": ["claude-sonnet-4-20250514", "gpt-4o", "gpt-5.2"],
+  "openai": ["gpt-4o", "gpt-4o-mini", "gpt-5.2", "gpt-5.4", "gpt-5.1-codex-mini"],
+  "github-copilot": ["claude-sonnet-4-20250514", "gpt-4o", "gpt-5.2", "gpt-5.4", "gpt-5.1-mini", "claude-sonnet-4", "claude-sonnet-4.5", "gpt-5", "gpt-5.1", "gemini-2.5-pro"],
+  "copilot": ["claude-sonnet-4-20250514", "gpt-4o", "gpt-5.2", "gpt-5.4", "gpt-5.1-mini", "claude-sonnet-4", "claude-sonnet-4.5", "gpt-5", "gpt-5.1", "gemini-2.5-pro"],
 } as const
 
 export const DEFAULT_PROVIDER: SupportedProvider = "anthropic"
