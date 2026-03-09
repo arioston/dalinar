@@ -9,3 +9,7 @@ bun.lock
 .specs
 .env
 auth.json
+
+# Transpiler artifacts alongside source
+skills/**/*.js
+skills/**/*.d.ts
