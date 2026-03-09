@@ -68,9 +68,25 @@ export const analyzeWithContextPipeline = (
     } else {
       const fs = yield* FileSystem.FileSystem
       const outDir = resolve(opts.root ?? process.cwd(), ".refinement")
-      const outPath = resolve(outDir, `${epicKey}-analysis.md`)
       yield* fs.makeDirectory(outDir, { recursive: true }).pipe(
-        Effect.flatMap(() => fs.writeFileString(outPath, result.markdown)),
+        Effect.mapError((e) => new FileOperationError({
+          message: `Failed to create output directory: ${e.message}`,
+          filePath: outDir,
+          cause: e,
+        })),
+      )
+
+      // Find next available version to avoid overwriting
+      const baseName = `${epicKey}-analysis`
+      let outPath = resolve(outDir, `${baseName}.md`)
+      const baseExists = yield* fs.exists(outPath)
+      if (baseExists) {
+        let v = 2
+        while (yield* fs.exists(resolve(outDir, `${baseName}-v${v}.md`))) v++
+        outPath = resolve(outDir, `${baseName}-v${v}.md`)
+      }
+
+      yield* fs.writeFileString(outPath, result.markdown).pipe(
         Effect.mapError((e) => new FileOperationError({
           message: `Failed to write analysis: ${e.message}`,
           filePath: outPath,
