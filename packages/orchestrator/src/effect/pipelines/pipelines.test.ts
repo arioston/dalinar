@@ -2,6 +2,8 @@ import { describe, expect, test } from "bun:test"
 import { Effect, Layer } from "effect"
 import { NodeFileSystem } from "@effect/platform-node"
 import { JasnahService, SazedService, type JasnahServiceShape, type SazedServiceShape } from "../services.js"
+import { JiraService, type JiraServiceShape } from "../services/jira.js"
+import { JiraTask } from "../jira-schemas.js"
 import { SubprocessService } from "../subprocess.js"
 import { SazedError } from "../errors.js"
 import { SazedAnalyzeOutput, SazedSyncOutput, SazedStatusOutput, SazedNotesListOutput } from "@dalinar/protocol"
@@ -55,8 +57,14 @@ const TestSubprocess = Layer.succeed(SubprocessService, {
     Effect.succeed({ stdout: "", stderr: "", exitCode: 0, timedOut: false }),
 })
 
-const TestLayer = Layer.mergeAll(TestJasnah, TestSazed, TestSubprocess, NodeFileSystem.layer)
-const FailLayer = Layer.mergeAll(TestJasnah, FailingSazed, TestSubprocess, NodeFileSystem.layer)
+const TestJira = Layer.succeed(JiraService, {
+  resolveKey: () => Effect.succeed(null),
+  fetchTask: (key) => Effect.succeed(new JiraTask({ key, summary: "", status: "Unknown", issueType: "Unknown" })),
+  fetchTasksForEpic: () => Effect.succeed([]),
+} satisfies JiraServiceShape)
+
+const TestLayer = Layer.mergeAll(TestJasnah, TestSazed, TestSubprocess, TestJira, NodeFileSystem.layer)
+const FailLayer = Layer.mergeAll(TestJasnah, FailingSazed, TestSubprocess, TestJira, NodeFileSystem.layer)
 
 // ── reflect ───────────────────────────────────────────────────────
 

@@ -1,4 +1,4 @@
-import { Effect, Option, RateLimiter, Schema } from "effect"
+import { Effect, RateLimiter, Schema } from "effect"
 import { FileSystem } from "@effect/platform"
 import { JasnahService, SazedService, type ExtractEntry, type DatastoreOptions } from "../services.js"
 import type { SazedAnalyzeOutput } from "@dalinar/protocol"
@@ -289,9 +289,7 @@ const enrichForensicsWithJira = (
   Effect.gen(function* () {
     if (!output.forensicsSummary) return new Map<string, JiraTask>()
 
-    const jiraOption = yield* Effect.serviceOption(JiraService)
-    if (Option.isNone(jiraOption)) return new Map<string, JiraTask>()
-    const jira = jiraOption.value
+    const jira = yield* JiraService
 
     // Collect unique Jira keys from all bug introductions
     const allKeys = new Set(

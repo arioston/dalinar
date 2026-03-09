@@ -1,6 +1,6 @@
 import { Effect, Layer } from "effect"
 import { JasnahService, ProjectRoot, ProjectRootLive } from "../services.js"
-import { JiraService, JiraServiceLive } from "../services/jira.js"
+import { JiraService } from "../services/jira.js"
 import { OrchestratorLive } from "../runtime.js"
 import { WALServiceLive } from "../wal/service.js"
 import { readOrders } from "../wal/read.js"
@@ -246,7 +246,6 @@ export const deepAnalyzePipeline = (opts: DeepAnalyzeOptions) =>
 
 export const DeepAnalyzeLive = (root: string) =>
   Layer.mergeAll(
-    JiraServiceLive,
     WALServiceLive,
   ).pipe(
     Layer.provideMerge(OrchestratorLive),

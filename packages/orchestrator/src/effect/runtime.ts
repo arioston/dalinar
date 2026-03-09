@@ -2,6 +2,7 @@ import { Layer, Match } from "effect"
 import { NodeFileSystem } from "@effect/platform-node"
 import { SubprocessServiceLive } from "./subprocess.js"
 import { JasnahServiceLive, SazedServiceLive, HoidServiceLive } from "./services.js"
+import { JiraServiceLive } from "./services/jira.js"
 import type {
   SubprocessError,
   JasnahError,
@@ -21,6 +22,7 @@ export const OrchestratorLive = Layer.mergeAll(
   JasnahServiceLive,
   SazedServiceLive,
   HoidServiceLive,
+  JiraServiceLive,
 ).pipe(
   Layer.provideMerge(SubprocessServiceLive),
   Layer.provideMerge(NodeFileSystem.layer),

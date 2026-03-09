@@ -1,4 +1,4 @@
-import { Effect, Option } from "effect"
+import { Effect } from "effect"
 import { FileSystem } from "@effect/platform"
 import { resolve } from "path"
 import { type AnalyzeOptions } from "../services.js"
@@ -13,22 +13,20 @@ export const analyzeWithContextPipeline = (
   opts: AnalyzeOptions & { root?: string },
 ) =>
   Effect.gen(function* () {
-    // Stage 0: Resolve key (task → parent epic) — uses JiraService if available
-    const jiraOption = yield* Effect.serviceOption(JiraService)
+    // Stage 0: Resolve key (task → parent epic) via Jira
+    const jira = yield* JiraService
 
     let epicKey = opts.epicKey
     let taskKey: string | undefined
 
-    if (Option.isSome(jiraOption)) {
-      const resolved = yield* jiraOption.value.resolveKey(opts.epicKey).pipe(
-        Effect.orElseSucceed(() => null),
-      )
-      if (resolved) {
-        epicKey = resolved.epicKey
-        taskKey = resolved.taskKey
-        if (taskKey) {
-          yield* Effect.log(`Resolved task ${taskKey} (${resolved.issueType}) → epic ${epicKey}`)
-        }
+    const resolved = yield* jira.resolveKey(opts.epicKey).pipe(
+      Effect.orElseSucceed(() => null),
+    )
+    if (resolved) {
+      epicKey = resolved.epicKey
+      taskKey = resolved.taskKey
+      if (taskKey) {
+        yield* Effect.log(`Resolved task ${taskKey} (${resolved.issueType}) → epic ${epicKey}`)
       }
     }
 
