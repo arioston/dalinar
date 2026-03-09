@@ -91,9 +91,24 @@ export const runCli = (
 
   Effect.runPromise(
     withChecks.pipe(
-      Effect.tapError((error) =>
-        Effect.logError(`[dalinar] ${error._tag}: ${error.message}`),
-      ),
+      Effect.tapError((error) => {
+        const annotations: Record<string, string> = {
+          errorTag: error._tag,
+          errorMessage: error.message,
+        }
+        if ("epicKey" in error && error.epicKey) annotations.epicKey = error.epicKey
+        if ("command" in error && error.command) annotations.command = error.command
+        if ("category" in error && error.category) annotations.category = error.category
+        if ("exitCode" in error && error.exitCode !== undefined) annotations.exitCode = String(error.exitCode)
+        if ("stderr" in error && error.stderr) annotations.stderr = error.stderr
+        if ("operation" in error && error.operation) annotations.operation = error.operation
+        if ("filePath" in error && error.filePath) annotations.filePath = error.filePath
+        if ("ticketKey" in error && error.ticketKey) annotations.ticketKey = error.ticketKey
+        if ("variable" in error && error.variable) annotations.variable = error.variable
+        return Effect.logError("[dalinar] Pipeline failed").pipe(
+          Effect.annotateLogs(annotations),
+        )
+      }),
       Effect.catchAll((error) =>
         Effect.sync(() => {
           process.exitCode = exitCodeForError(error)

@@ -18,6 +18,10 @@ export class JasnahError extends Schema.TaggedError<JasnahError>()("JasnahError"
 export class SazedError extends Schema.TaggedError<SazedError>()("SazedError", {
   message: Schema.String,
   epicKey: Schema.optional(Schema.String),
+  command: Schema.optional(Schema.String),
+  category: Schema.optional(Schema.Literal("not-found", "auth", "timeout", "crash", "decode", "version-mismatch", "unknown")),
+  exitCode: Schema.optional(Schema.Number),
+  stderr: Schema.optional(Schema.String),
   cause: Schema.optional(Schema.Unknown),
 }) {}
 

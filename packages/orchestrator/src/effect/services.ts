@@ -355,27 +355,55 @@ export class SazedService extends Context.Tag("@dalinar/SazedService")<
   SazedServiceShape
 >() {}
 
+const SAZED_TIMEOUT_SECONDS = Math.max(
+  30,
+  Number(process.env.SAZED_TIMEOUT ?? 120),
+) || 120
+
 const makeSazed = Effect.gen(function* () {
   const subprocess = yield* SubprocessService
 
-  const runSazed = (args: string[], env?: Record<string, string | undefined>) =>
-    subprocess
-      .run(resolveSazedCli(), {
-        args,
-        cwd: resolveSazedRoot(),
-        nothrow: true,
-        timeout: "120 seconds",
-        env,
-      })
-      .pipe(
-        Effect.mapError(
-          (e) =>
-            new SazedError({
-              message: `Sazed command failed: ${e.message}`,
-              cause: e,
-            }),
-        ),
-      )
+  const runSazed = (args: string[], env?: Record<string, string | undefined>) => {
+    const cmd = resolveSazedCli()
+    const timeoutLabel = `${SAZED_TIMEOUT_SECONDS}s`
+    return Effect.logDebug("Spawning Sazed subprocess").pipe(
+      Effect.annotateLogs({ command: cmd, args: args.join(" "), timeout: timeoutLabel }),
+      Effect.flatMap(() =>
+        subprocess
+          .run(cmd, {
+            args,
+            cwd: resolveSazedRoot(),
+            nothrow: true,
+            timeout: Duration.seconds(SAZED_TIMEOUT_SECONDS),
+            env,
+          })
+          .pipe(
+            Effect.tapError((e) =>
+              Effect.logError("Sazed subprocess failed").pipe(
+                Effect.annotateLogs({
+                  command: e.command ?? cmd,
+                  category: e.category ?? "unknown",
+                  exitCode: e.exitCode !== undefined ? String(e.exitCode) : "N/A",
+                  stderr: e.stderr ?? "",
+                }),
+              ),
+            ),
+            Effect.mapError(
+              (e) =>
+                new SazedError({
+                  message: `Sazed command failed: ${e.message}`,
+                  command: e.command,
+                  category: e.category,
+                  exitCode: e.exitCode,
+                  stderr: e.stderr,
+                  cause: e,
+                }),
+            ),
+          ),
+      ),
+      Effect.withLogSpan("sazed-subprocess"),
+    )
+  }
 
   const decodeSazed = <A, I>(schema: Schema.Schema<A, I, never>) =>
     (stdout: string) => {
@@ -415,8 +443,14 @@ const makeSazed = Effect.gen(function* () {
     runSazed(args, opts?.env).pipe(
       Effect.filterOrFail(
         (r) => r.exitCode === 0,
-        (r) => new SazedError({ message: `${errorContext} failed: ${r.stderr || r.stdout || r.exitCode}`, epicKey: opts?.epicKey }),
+        (r) => new SazedError({
+          message: `${errorContext} failed: ${r.stderr || r.stdout || r.exitCode}`,
+          epicKey: opts?.epicKey,
+          exitCode: r.exitCode,
+          stderr: r.stderr,
+        }),
       ),
+      Effect.tap(() => Effect.logDebug(`Sazed ${errorContext} completed`)),
       Effect.flatMap((r) => decodeSazed(schema)(r.stdout)),
     )
 

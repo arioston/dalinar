@@ -81,12 +81,19 @@ export const analyzeTask = (opts: AnalyzeTaskOptions) =>
     const sazed = yield* SazedService
 
     // Step 1: Search Jasnah for prior context
-    const memories = yield* jasnah.searchContextForEpic(opts.epicKey, opts.root)
+    yield* Effect.logInfo("Searching Jasnah for prior context")
+    const memories = yield* jasnah
+      .searchContextForEpic(opts.epicKey, opts.root)
+      .pipe(Effect.withLogSpan("jasnah-search"))
 
     // Cap at 10 results
     const capped = [...memories]
       .sort((a, b) => b.score - a.score)
       .slice(0, 10)
+
+    yield* Effect.logInfo("Prior context loaded").pipe(
+      Effect.annotateLogs({ count: String(capped.length) }),
+    )
 
     // Step 2: Build context block
     let contextBlock: string | undefined
@@ -100,17 +107,32 @@ export const analyzeTask = (opts: AnalyzeTaskOptions) =>
     }
 
     // Step 3: Run Sazed analysis (returns structured JSON, errors via error channel)
-    const result = yield* sazed.analyze({
-      epicKey: opts.epicKey,
-      context: contextBlock,
-      ...(opts.force ? { force: opts.force } : {}),
-      ...(opts.notes ? { notes: opts.notes } : {}),
-      ...(opts.noMap ? { noMap: opts.noMap } : {}),
-      ...(opts.noCache ? { noCache: opts.noCache } : {}),
-      ...(opts.forensics ? { forensics: opts.forensics } : {}),
-    })
+    yield* Effect.logInfo("Starting Sazed analysis")
+    const result = yield* sazed
+      .analyze({
+        epicKey: opts.epicKey,
+        context: contextBlock,
+        ...(opts.force ? { force: opts.force } : {}),
+        ...(opts.notes ? { notes: opts.notes } : {}),
+        ...(opts.noMap ? { noMap: opts.noMap } : {}),
+        ...(opts.noCache ? { noCache: opts.noCache } : {}),
+        ...(opts.forensics ? { forensics: opts.forensics } : {}),
+      })
+      .pipe(
+        Effect.tapError((e) =>
+          Effect.logError("Sazed analysis failed").pipe(
+            Effect.annotateLogs({
+              memoriesInjected: String(capped.length),
+              contextLength: String(contextBlock?.length ?? 0),
+              errorCategory: e.category ?? "unknown",
+            }),
+          ),
+        ),
+        Effect.withLogSpan("sazed-analyze"),
+      )
 
     // Step 4: Extract notes back to Jasnah (structured data, no regex parsing)
+    yield* Effect.logInfo("Extracting notes to Jasnah")
     const epicKey = opts.epicKey
     const taskKey = opts.taskKey
     const newNotes = structuredNotesToEntries(result, { epicKey, taskKey })
@@ -121,12 +143,17 @@ export const analyzeTask = (opts: AnalyzeTaskOptions) =>
 
     let notesExtracted = 0
     if (newNotes.length > 0) {
-      const extraction = yield* jasnah.extractMemories(newNotes, {
-        root: opts.root,
-        source,
-      })
+      const extraction = yield* jasnah
+        .extractMemories(newNotes, {
+          root: opts.root,
+          source,
+        })
+        .pipe(Effect.withLogSpan("note-extraction"))
       if (extraction.success) {
         notesExtracted = newNotes.length
+        yield* Effect.logInfo("Notes extracted").pipe(
+          Effect.annotateLogs({ count: String(notesExtracted) }),
+        )
       } else {
         yield* Effect.logWarning(`Extraction failed: ${extraction.output}`)
       }
@@ -137,4 +164,8 @@ export const analyzeTask = (opts: AnalyzeTaskOptions) =>
       memoriesUsed: capped.length,
       notesExtracted,
     } satisfies AnalyzeTaskResult
-  }).pipe(Effect.withSpan("analyze-task"))
+  }).pipe(
+    Effect.annotateLogs({ epicKey: opts.epicKey }),
+    Effect.withLogSpan("analyze-task"),
+    Effect.withSpan("analyze-task"),
+  )

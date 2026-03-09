@@ -15,19 +15,16 @@ if (import.meta.main) {
 
   const { Effect } = await import("effect")
   const { vaultSyncPipeline } = await import("./effect/pipelines/vault-sync.js")
-  const { runCli } = await import("./effect/runtime.js")
+  const { OrchestratorLive, runCli } = await import("./effect/runtime.js")
 
   runCli(
     vaultSyncPipeline(root).pipe(
       Effect.tap((result) =>
-        Effect.sync(() => {
-          if (result.synced) {
-            console.log(`[vault-sync] Synced to ${result.target}`)
-          } else {
-            console.log(`[vault-sync] Skipped: ${result.reason}`)
-          }
-        }),
+        result.synced
+          ? Effect.logInfo(`Synced to ${result.target}`)
+          : Effect.logInfo(`Skipped: ${result.reason}`),
       ),
+      Effect.provide(OrchestratorLive),
       Effect.asVoid,
     ),
   )

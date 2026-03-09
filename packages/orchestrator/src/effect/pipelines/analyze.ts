@@ -29,7 +29,7 @@ export const analyzeWithContextPipeline = (
       }
     }
 
-    yield* Effect.log(`Analyzing ${epicKey} with context...`)
+    yield* Effect.logInfo("Starting analysis with context")
 
     // Stages 1-3: Search context → Sazed analysis → Extract notes (via shared helper)
     const result = yield* analyzeTask({
@@ -43,15 +43,19 @@ export const analyzeWithContextPipeline = (
       ...(opts.forensics ? { forensics: opts.forensics } : {}),
     })
 
-    yield* Effect.log(`Analysis complete (${result.markdown.length} chars, ${result.notesExtracted} notes extracted)`)
+    yield* Effect.logInfo("Analysis complete").pipe(
+      Effect.annotateLogs({ chars: String(result.markdown.length), notesExtracted: String(result.notesExtracted) }),
+    )
 
     // Stage 4: Vault sync
-    yield* Effect.log("Vault sync...")
-    const vaultResult = yield* vaultSyncPipeline(opts.root)
+    yield* Effect.logInfo("Vault sync...")
+    const vaultResult = yield* vaultSyncPipeline(opts.root).pipe(
+      Effect.withLogSpan("vault-sync"),
+    )
     if (vaultResult.synced) {
-      yield* Effect.log(`Synced to ${vaultResult.target}`)
+      yield* Effect.logInfo(`Synced to ${vaultResult.target}`)
     } else {
-      yield* Effect.log(`Skipped: ${vaultResult.reason}`)
+      yield* Effect.logDebug(`Vault sync skipped: ${vaultResult.reason}`)
     }
 
     // Output the analysis
@@ -63,4 +67,11 @@ export const analyzeWithContextPipeline = (
     )
 
     return { markdown: result.markdown, memoriesUsed: result.memoriesUsed }
-  }).pipe(Effect.withSpan("analyze-with-context"))
+  }).pipe(
+    Effect.annotateLogs({
+      pipeline: "analyze-with-context",
+      epicKey: opts.epicKey,
+    }),
+    Effect.withLogSpan("analyze-with-context"),
+    Effect.withSpan("analyze-with-context"),
+  )
