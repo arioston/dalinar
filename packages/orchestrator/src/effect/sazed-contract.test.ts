@@ -349,29 +349,60 @@ describe("Sazed submodule version", () => {
 describe("extractJsonEnvelope", () => {
   test("returns clean JSON unchanged", () => {
     const json = '{"contractVersion":"1.0.0","data":{"notes":[]}}'
-    expect(extractJsonEnvelope(json)).toBe(json)
+    const result = extractJsonEnvelope(json)
+    expect(result.json).toBe(json)
+    expect(result.hadNoise).toBe(false)
   })
 
   test("strips leading log lines", () => {
     const dirty = 'Loading config...\nInitializing...\n{"contractVersion":"1.0.0","data":{"notes":[]}}'
     const result = extractJsonEnvelope(dirty)
-    expect(JSON.parse(result)).toEqual({ contractVersion: "1.0.0", data: { notes: [] } })
+    expect(JSON.parse(result.json)).toEqual({ contractVersion: "1.0.0", data: { notes: [] } })
+    expect(result.hadNoise).toBe(true)
   })
 
   test("strips trailing log lines", () => {
     const dirty = '{"contractVersion":"1.0.0","data":{"notes":[]}}\nDone in 0.5s'
     const result = extractJsonEnvelope(dirty)
-    expect(JSON.parse(result)).toEqual({ contractVersion: "1.0.0", data: { notes: [] } })
+    expect(JSON.parse(result.json)).toEqual({ contractVersion: "1.0.0", data: { notes: [] } })
   })
 
-  test("handles array JSON", () => {
+  test("handles array JSON (prefers inner object over outer array)", () => {
+    // When an array contains objects, the extractor prefers the first object
+    // since envelopes are always objects. Pure arrays without objects still work.
     const dirty = 'log line\n[{"id":1},{"id":2}]\ntrailer'
     const result = extractJsonEnvelope(dirty)
-    expect(JSON.parse(result)).toEqual([{ id: 1 }, { id: 2 }])
+    // Finds {"id":1} as first object inside the array
+    expect(JSON.parse(result.json)).toEqual({ id: 1 })
+    expect(result.hadNoise).toBe(true)
   })
 
   test("returns original when no JSON found", () => {
-    expect(extractJsonEnvelope("no json here")).toBe("no json here")
+    const result = extractJsonEnvelope("no json here")
+    expect(result.json).toBe("no json here")
+    expect(result.hadNoise).toBe(false)
+  })
+
+  test("prefers object over array when both present in prefix noise", () => {
+    // Real-world scenario: Sazed logs emit an array like ["technicalDefinition"]
+    // before the actual envelope object. The envelope is always an object.
+    const dirty = 'debug: processing ["technicalDefinition"]\n{"contractVersion":"1.0.0","data":{"notes":[]}}'
+    const result = extractJsonEnvelope(dirty)
+    expect(JSON.parse(result.json)).toEqual({ contractVersion: "1.0.0", data: { notes: [] } })
+    expect(result.hadNoise).toBe(true)
+  })
+
+  test("prefers object even when stray array appears first in clean output", () => {
+    const dirty = '["technicalDefinition"]\n{"contractVersion":"1.0.0","data":{"notes":[]}}'
+    const result = extractJsonEnvelope(dirty)
+    expect(JSON.parse(result.json)).toEqual({ contractVersion: "1.0.0", data: { notes: [] } })
+  })
+
+  test("falls back to array when no object is found", () => {
+    const dirty = 'log line\n["a","b","c"]\ntrailer'
+    const result = extractJsonEnvelope(dirty)
+    expect(JSON.parse(result.json)).toEqual(["a", "b", "c"])
+    expect(result.hadNoise).toBe(true)
   })
 })
 
@@ -419,9 +450,10 @@ describe("Golden file fixtures", () => {
   test("fixtures survive extractJsonEnvelope + decode (simulating log contamination)", () => {
     const raw = readFileSync(resolve(fixturesDir, "notes-list.json"), "utf-8")
     const dirty = `[sazed] Loading...\n${raw}\n[sazed] Done`
-    const cleaned = extractJsonEnvelope(dirty)
+    const { json: cleaned, hadNoise } = extractJsonEnvelope(dirty)
     const decoded = Schema.decodeUnknownSync(Envelope(SazedNotesListOutput))(cleaned)
 
+    expect(hadNoise).toBe(true)
     expect(decoded.data.notes).toHaveLength(2)
   })
 })
@@ -448,12 +480,12 @@ const runSazed = (args: string[]) =>
 
 /** Assert stdout contains valid JSON after extraction. */
 function assertCleanJson(stdout: string) {
-  const cleaned = extractJsonEnvelope(stdout)
+  const { json } = extractJsonEnvelope(stdout)
   expect(
-    cleaned.startsWith("{") || cleaned.startsWith("["),
-    `stdout must contain JSON, got: ${cleaned.slice(0, 80)}`,
+    json.startsWith("{") || json.startsWith("["),
+    `stdout must contain JSON, got: ${json.slice(0, 80)}`,
   ).toBe(true)
-  expect(() => JSON.parse(cleaned)).not.toThrow()
+  expect(() => JSON.parse(json)).not.toThrow()
 }
 
 describe.skipIf(!RUN_EXTERNAL)("Sazed CLI contract (integration)", () => {
@@ -463,7 +495,7 @@ describe.skipIf(!RUN_EXTERNAL)("Sazed CLI contract (integration)", () => {
     expect(result.exitCode, `sazed failed: ${result.stderr}`).toBe(0)
     assertCleanJson(result.stdout)
 
-    const cleaned = extractJsonEnvelope(result.stdout)
+    const { json: cleaned } = extractJsonEnvelope(result.stdout)
     const decoded = Schema.decodeUnknownSync(Envelope(SazedNotesListOutput))(cleaned)
 
     expect(decoded.contractVersion).toBe(SAZED_CONTRACT_VERSION)
@@ -481,7 +513,7 @@ describe.skipIf(!RUN_EXTERNAL)("Sazed CLI contract (integration)", () => {
     expect(result.exitCode, `sazed failed: ${result.stderr}`).toBe(0)
     assertCleanJson(result.stdout)
 
-    const cleaned = extractJsonEnvelope(result.stdout)
+    const { json: cleaned } = extractJsonEnvelope(result.stdout)
     const decoded = Schema.decodeUnknownSync(Envelope(SazedNotesListOutput))(cleaned)
     expect(decoded.contractVersion).toBe(SAZED_CONTRACT_VERSION)
     expect(Array.isArray(decoded.data.notes)).toBe(true)
@@ -493,7 +525,7 @@ describe.skipIf(!RUN_EXTERNAL)("Sazed CLI contract (integration)", () => {
     expect(result.exitCode, `sazed failed: ${result.stderr}`).toBe(0)
     assertCleanJson(result.stdout)
 
-    const cleaned = extractJsonEnvelope(result.stdout)
+    const { json: cleaned } = extractJsonEnvelope(result.stdout)
     const decoded = Schema.decodeUnknownSync(Envelope(SazedNotesListOutput))(cleaned)
 
     expect(decoded.contractVersion).toBe(SAZED_CONTRACT_VERSION)
@@ -511,7 +543,7 @@ describe.skipIf(!RUN_EXTERNAL)("Sazed CLI contract (integration)", () => {
     expect(result.exitCode, `sazed failed: ${result.stderr}`).toBe(0)
     assertCleanJson(result.stdout)
 
-    const cleaned = extractJsonEnvelope(result.stdout)
+    const { json: cleaned } = extractJsonEnvelope(result.stdout)
     const decoded = Schema.decodeUnknownSync(Envelope(SazedStatusOutput))(cleaned)
     expect(decoded.contractVersion).toBe(SAZED_CONTRACT_VERSION)
     expect(decoded.data.epicKey).toBe("TEST-NONEXISTENT")

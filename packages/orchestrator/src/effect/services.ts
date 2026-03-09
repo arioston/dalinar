@@ -38,31 +38,40 @@ import {
  * Tries each candidate `{` or `[` position and returns the first
  * balanced extraction that parses as valid JSON.
  */
-export function extractJsonEnvelope(raw: string): string {
+export interface JsonEnvelopeResult {
+  readonly json: string
+  /** True when non-JSON prefix/suffix was stripped from the raw output. */
+  readonly hadNoise: boolean
+}
+
+export function extractJsonEnvelope(raw: string): JsonEnvelopeResult {
   const trimmed = raw.trim()
 
   // Fast path: already clean JSON
   if (trimmed.startsWith("{") || trimmed.startsWith("[")) {
-    try { JSON.parse(trimmed); return trimmed } catch { /* fall through */ }
+    try { JSON.parse(trimmed); return { json: trimmed, hadNoise: false } } catch { /* fall through */ }
   }
 
   // Scan for each potential JSON start — reaching here means
   // the subprocess emitted non-JSON content mixed with its output.
-  for (let pos = 0; pos < trimmed.length; pos++) {
-    const ch = trimmed[pos]
-    if (ch !== "{" && ch !== "[") continue
-
-    const candidate = extractBalanced(trimmed, pos)
-    if (candidate !== null) {
-      try {
-        JSON.parse(candidate)
-        console.warn("[extractJsonEnvelope] Subprocess emitted non-JSON prefix before JSON payload — consider fixing the upstream --json output")
-        return candidate
-      } catch { /* try next */ }
+  // Two-pass: prefer objects (envelopes are always objects), fall back to arrays.
+  const tryExtract = (opener: string) => {
+    for (let pos = 0; pos < trimmed.length; pos++) {
+      if (trimmed[pos] !== opener) continue
+      const candidate = extractBalanced(trimmed, pos)
+      if (candidate !== null) {
+        try { JSON.parse(candidate); return candidate } catch { /* try next */ }
+      }
     }
+    return null
   }
 
-  return trimmed
+  const found = tryExtract("{") ?? tryExtract("[")
+  if (found !== null) {
+    return { json: found, hadNoise: true }
+  }
+
+  return { json: trimmed, hadNoise: false }
 }
 
 function extractBalanced(s: string, start: number): string | null {
@@ -408,8 +417,9 @@ const makeSazed = Effect.gen(function* () {
   const decodeSazed = <A, I>(schema: Schema.Schema<A, I, never>) =>
     (stdout: string) => {
       const Envelope = SazedEnvelope(schema)
-      const cleaned = extractJsonEnvelope(stdout)
-      return Schema.decodeUnknown(Envelope)(cleaned).pipe(
+      const { json: cleaned, hadNoise } = extractJsonEnvelope(stdout)
+      return (hadNoise ? Effect.logWarning("Subprocess emitted non-JSON prefix before JSON payload — consider fixing the upstream --json output") : Effect.void).pipe(
+        Effect.flatMap(() => Schema.decodeUnknown(Envelope)(cleaned)),
         Effect.tap((envelope) => {
           const compat = checkVersionCompat(SAZED_CONTRACT_VERSION, envelope.contractVersion)
           return compat === "major-mismatch"
@@ -575,8 +585,10 @@ const makeHoid = Effect.gen(function* () {
       )
 
   const decodeHoid = <A, I>(schema: Schema.Schema<A, I, never>, operation: string) =>
-    (stdout: string) =>
-      Schema.decodeUnknown(Schema.parseJson(schema))(extractJsonEnvelope(stdout)).pipe(
+    (stdout: string) => {
+      const { json: cleaned, hadNoise } = extractJsonEnvelope(stdout)
+      return (hadNoise ? Effect.logWarning("Hoid subprocess emitted non-JSON prefix before JSON payload") : Effect.void).pipe(
+        Effect.flatMap(() => Schema.decodeUnknown(Schema.parseJson(schema))(cleaned)),
         Effect.mapError(
           (e) =>
             new HoidError({
@@ -586,6 +598,7 @@ const makeHoid = Effect.gen(function* () {
             }),
         ),
       )
+    }
 
   const buildCalendarArgs = (
     opts: CalendarListOptions | FreeSlotsOptions | ConflictsOptions = {},
