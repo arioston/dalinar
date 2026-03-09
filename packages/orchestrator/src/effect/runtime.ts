@@ -1,9 +1,7 @@
-import { Effect, Layer, Match } from "effect"
+import { Layer, Match } from "effect"
 import { NodeFileSystem } from "@effect/platform-node"
 import { SubprocessServiceLive } from "./subprocess.js"
 import { JasnahServiceLive, SazedServiceLive, HoidServiceLive } from "./services.js"
-import { preflight } from "./paths.js"
-import { doctor } from "./doctor.js"
 import type {
   SubprocessError,
   JasnahError,
@@ -28,12 +26,6 @@ export const OrchestratorLive = Layer.mergeAll(
   Layer.provideMerge(NodeFileSystem.layer),
 )
 
-// ── Shared base layer for preflight checks ────────────────────────
-
-const PreflightLayer = Layer.mergeAll(
-  SubprocessServiceLive,
-  NodeFileSystem.layer,
-)
 
 // ── CLI runner ─────────────────────────────────────────────────────
 
@@ -68,55 +60,3 @@ export const exitCodeForError = (error: OrchestratorError): number =>
     Match.exhaustive,
   )
 
-const errorAnnotations = (error: OrchestratorError): Record<string, string> => {
-  const base: Record<string, string> = { errorTag: error._tag, errorMessage: error.message }
-  for (const [k, v] of Object.entries(error)) {
-    if (v !== undefined && k !== "_tag" && k !== "message" && k !== "cause" && typeof v !== "object") {
-      base[k] = String(v)
-    }
-  }
-  return base
-}
-
-export const runCli = (
-  effect: Effect.Effect<void, OrchestratorError, never>,
-): void => {
-  const doctorCheck = doctor.pipe(
-    Effect.provide(PreflightLayer),
-    Effect.catchTag("ConfigurationError", (e) =>
-      Effect.fail(e as OrchestratorError),
-    ),
-    Effect.catchAll((e) =>
-      Effect.logWarning(`Doctor check failed: ${String(e)}`),
-    ),
-  )
-
-  const withChecks = Effect.all([
-    preflight.pipe(
-      Effect.provide(PreflightLayer),
-      Effect.catchAll((e) => Effect.logWarning(`Preflight failed: ${e}`)),
-    ),
-    doctorCheck,
-  ]).pipe(Effect.flatMap(() => effect))
-
-  Effect.runPromise(
-    withChecks.pipe(
-      Effect.tapError((error) =>
-        Effect.logError("[dalinar] Pipeline failed").pipe(
-          Effect.annotateLogs(errorAnnotations(error)),
-        ),
-      ),
-      Effect.catchAll((error) =>
-        Effect.sync(() => {
-          process.exitCode = exitCodeForError(error)
-        }),
-      ),
-      Effect.catchAllDefect((defect) =>
-        Effect.sync(() => {
-          console.error("[dalinar] Unexpected error:", defect)
-          process.exitCode = 1
-        }),
-      ),
-    ),
-  )
-}

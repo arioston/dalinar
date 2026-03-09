@@ -1,15 +1,6 @@
 import { Effect } from "effect"
 import { JasnahService, type ExtractEntry } from "../services.js"
-import type {
-  SprintReflection,
-  EstimateCorrection,
-  BlockerEntry,
-  WinEntry,
-  DecisionRevision,
-} from "../types/reflect.js"
-
-// Re-export types for convenience
-export type { SprintReflection, EstimateCorrection, BlockerEntry, WinEntry, DecisionRevision }
+import type { SprintReflection } from "../types/reflect.js"
 
 export interface ReflectOptions {
   dryRun?: boolean

@@ -85,7 +85,6 @@ export { doctor, type DoctorReport } from "./doctor.js"
 
 export {
   OrchestratorLive,
-  runCli,
   exitCodeForError,
   type OrchestratorError,
 } from "./runtime.js"

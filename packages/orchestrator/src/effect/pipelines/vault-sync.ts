@@ -1,5 +1,4 @@
 import { Effect } from "effect"
-import { FileSystem } from "@effect/platform"
 import { resolve } from "path"
 import { resolveVaultConfig, vaultProjectPath } from "@dalinar/protocol"
 import { VaultSyncError } from "../errors.js"
@@ -57,32 +56,3 @@ export const vaultSyncPipeline = (
       target: vaultProjectPath(config),
     } satisfies VaultSyncResult
   }).pipe(Effect.withSpan("vault-sync"))
-
-export const initWorkLogPipeline = (
-  overrides?: { workLogPath?: string },
-) =>
-  Effect.gen(function* () {
-    const config = resolveVaultConfig({ ...overrides, projectName: "_init" })
-    if (!config) {
-      return { created: false, reason: "WORK_LOG_PATH not set" }
-    }
-
-    const fs = yield* FileSystem.FileSystem
-    const globalDirs = [
-      "architecture",
-      "domain-facts",
-      "api-contracts",
-      "glossary",
-      "lessons-learned",
-    ]
-
-    yield* Effect.forEach(globalDirs, (dir) =>
-      fs.makeDirectory(`${config.workLogPath}/_global/${dir}`, { recursive: true }).pipe(
-        Effect.mapError(
-          (e) => new VaultSyncError({ message: `Failed to create directory: ${dir}`, cause: e }),
-        ),
-      ),
-    )
-
-    return { created: true, path: config.workLogPath }
-  }).pipe(Effect.withSpan("init-work-log"))
