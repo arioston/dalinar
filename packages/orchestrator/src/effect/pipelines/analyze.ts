@@ -1,5 +1,8 @@
 import { Effect, Option } from "effect"
+import { FileSystem } from "@effect/platform"
+import { resolve } from "path"
 import { type AnalyzeOptions } from "../services.js"
+import { FileOperationError } from "../errors.js"
 import { vaultSyncPipeline } from "./vault-sync.js"
 import { analyzeTask } from "./analyze-helper.js"
 import { JiraService } from "../services/jira.js"
@@ -59,10 +62,26 @@ export const analyzeWithContextPipeline = (
     }
 
     // Output the analysis
-    yield* Effect.log("\n" + "=".repeat(60))
-    yield* Effect.log(result.markdown)
-    yield* Effect.log("=".repeat(60))
-    yield* Effect.log(
+    if (opts.stdout) {
+      yield* Effect.log("\n" + "=".repeat(60))
+      yield* Effect.log(result.markdown)
+      yield* Effect.log("=".repeat(60))
+    } else {
+      const fs = yield* FileSystem.FileSystem
+      const outDir = resolve(opts.root ?? process.cwd(), ".refinement")
+      const outPath = resolve(outDir, `${epicKey}-analysis.md`)
+      yield* fs.makeDirectory(outDir, { recursive: true }).pipe(
+        Effect.flatMap(() => fs.writeFileString(outPath, result.markdown)),
+        Effect.mapError((e) => new FileOperationError({
+          message: `Failed to write analysis: ${e.message}`,
+          filePath: outPath,
+          cause: e,
+        })),
+      )
+      yield* Effect.logInfo(`Written to ${outPath}`)
+    }
+
+    yield* Effect.logInfo(
       `Done. ${epicKey} analyzed with ${result.memoriesUsed} prior context entries.`,
     )
 

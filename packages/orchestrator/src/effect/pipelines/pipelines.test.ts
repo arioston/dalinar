@@ -55,8 +55,8 @@ const TestSubprocess = Layer.succeed(SubprocessService, {
     Effect.succeed({ stdout: "", stderr: "", exitCode: 0, timedOut: false }),
 })
 
-const TestLayer = Layer.mergeAll(TestJasnah, TestSazed, TestSubprocess)
-const FailLayer = Layer.mergeAll(TestJasnah, FailingSazed, TestSubprocess)
+const TestLayer = Layer.mergeAll(TestJasnah, TestSazed, TestSubprocess, NodeFileSystem.layer)
+const FailLayer = Layer.mergeAll(TestJasnah, FailingSazed, TestSubprocess, NodeFileSystem.layer)
 
 // ── reflect ───────────────────────────────────────────────────────
 
@@ -293,6 +293,7 @@ describe("analyzeWithContextPipeline", () => {
       analyzeWithContextPipeline({
         epicKey: "EPIC-1",
         root: "/tmp/test",
+        stdout: true,
       }).pipe(Effect.provide(TestLayer)),
     )
 
@@ -305,6 +306,7 @@ describe("analyzeWithContextPipeline", () => {
       analyzeWithContextPipeline({
         epicKey: "EPIC-1",
         root: "/tmp/test",
+        stdout: true,
       }).pipe(Effect.provide(FailLayer)),
     )
 

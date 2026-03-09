@@ -19,7 +19,7 @@ function parseArgs(argv: string[]) {
   const args = argv.slice(2)
   const epicKey = args.find((a) => !a.startsWith("--"))
   if (!epicKey) {
-    console.error("Usage: analyze-with-context <KEY> [--force] [--notes] [--no-map] [--no-cache] [--forensics]")
+    console.error("Usage: analyze-with-context <KEY> [--force] [--notes] [--no-map] [--no-cache] [--forensics] [--stdout]")
     process.exit(1)
   }
 
@@ -30,6 +30,7 @@ function parseArgs(argv: string[]) {
     ...args.includes("--no-map") && { noMap: true as const },
     ...args.includes("--no-cache") && { noCache: true as const },
     ...args.includes("--forensics") && { forensics: true as const },
+    ...args.includes("--stdout") && { stdout: true as const },
     root: process.cwd(),
   }
 }
