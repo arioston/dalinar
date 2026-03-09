@@ -1,6 +1,6 @@
 import { Context, Effect, Layer, Schedule, Schema } from "effect"
 import { JiraError } from "../errors.js"
-import { JiraTask } from "../jira-schemas.js"
+import { JiraComment, JiraTask } from "../jira-schemas.js"
 import { SubprocessService } from "../subprocess.js"
 import { resolveJiraScript } from "../paths.js"
 import { extractJsonEnvelope } from "../services.js"
@@ -16,6 +16,13 @@ export interface ResolvedKey {
 
 // ── Jira API response schemas ───────────────────────────────────
 
+const JiraCommentItem = Schema.Struct({
+  id: Schema.String,
+  author: Schema.optional(Schema.Struct({ displayName: Schema.String })),
+  body: Schema.String,
+  created: Schema.String,
+})
+
 const JiraIssueFields = Schema.Struct({
   summary: Schema.optional(Schema.String),
   status: Schema.optional(Schema.Struct({ name: Schema.String })),
@@ -25,6 +32,9 @@ const JiraIssueFields = Schema.Struct({
   customfield_10014: Schema.optional(Schema.String),  // Epic Link
   customfield_10016: Schema.optional(Schema.Number),  // Story Points
   labels: Schema.optional(Schema.Array(Schema.String)),
+  comment: Schema.optional(Schema.Struct({
+    comments: Schema.Array(JiraCommentItem),
+  })),
 })
 
 const JiraIssueResponse = Schema.Struct({
@@ -88,6 +98,12 @@ const fieldsToJiraTask = (key: string, fields: JiraIssueFieldsType | undefined):
     storyPoints: fields?.customfield_10016,
     labels: fields?.labels,
     parentKey: fields?.parent?.key ?? fields?.customfield_10014,
+    comments: fields?.comment?.comments.map(c => new JiraComment({
+      id: c.id,
+      author: c.author?.displayName,
+      body: c.body,
+      created: c.created,
+    })),
   })
 
 const jiraRetry = Schedule.exponential("500 millis").pipe(
@@ -152,7 +168,7 @@ const makeJiraService = Effect.gen(function* () {
         .run(resolveJiraScript(), {
           args: [
             "GET",
-            `/rest/api/2/issue/${key}?fields=summary,status,issuetype,assignee,customfield_10016,labels,parent,customfield_10014`,
+            `/rest/api/2/issue/${key}?fields=summary,status,issuetype,assignee,customfield_10016,labels,parent,customfield_10014,comment`,
           ],
           nothrow: true,
           timeout: "30 seconds",

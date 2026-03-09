@@ -3,7 +3,7 @@ import { FileSystem } from "@effect/platform"
 import { JasnahService, SazedService, type ExtractEntry, type DatastoreOptions } from "../services.js"
 import type { SazedAnalyzeOutput } from "@dalinar/protocol"
 import { JiraService } from "../services/jira.js"
-import { JiraTask } from "../jira-schemas.js"
+import { JiraComment, JiraTask } from "../jira-schemas.js"
 
 // ── Extraction rules ──────────────────────────────────────────────
 // Each rule is a pure function: SazedAnalyzeOutput → ExtractEntry[].
@@ -222,16 +222,24 @@ function structuredNotesToEntries(
 // Persistent file-backed cache at .cache/jira-tickets.json.
 // Never expires — use `dalinar cache clear --jira` to invalidate.
 
+const JiraCacheCommentEntry = Schema.Struct({
+  id: Schema.String,
+  author: Schema.optional(Schema.String),
+  body: Schema.String,
+  created: Schema.String,
+})
+
 const JiraCacheEntry = Schema.Struct({
   key: Schema.String,
   summary: Schema.String,
   status: Schema.String,
   issueType: Schema.String,
   fetchedAt: Schema.String,
+  comments: Schema.Array(JiraCacheCommentEntry),
 })
 
 const JiraCacheFile = Schema.Struct({
-  version: Schema.Literal(1),
+  version: Schema.Literal(2),
   tickets: Schema.Array(JiraCacheEntry),
 })
 
@@ -246,7 +254,7 @@ const loadJiraCache = (root: string) =>
     const raw = yield* fs.readFileString(path).pipe(Effect.orElseSucceed(() => ""))
     if (!raw) return new Map<string, JiraCacheEntryType>()
     const decoded = yield* Schema.decodeUnknown(Schema.parseJson(JiraCacheFile))(raw).pipe(
-      Effect.orElseSucceed(() => ({ version: 1 as const, tickets: [] })),
+      Effect.orElseSucceed(() => ({ version: 2 as const, tickets: [] })),
     )
     return new Map(decoded.tickets.map(t => [t.key, t]))
   })
@@ -259,7 +267,7 @@ const saveJiraCache = (root: string, cache: Map<string, JiraCacheEntryType>) =>
     yield* fs.makeDirectory(dir, { recursive: true }).pipe(
       Effect.catchAll((e) => Effect.logDebug(`Jira cache dir creation failed: ${e.message}`)),
     )
-    const data = { version: 1 as const, tickets: [...cache.values()] }
+    const data = { version: 2 as const, tickets: [...cache.values()] }
     const json = yield* Schema.encode(Schema.parseJson(JiraCacheFile))(data).pipe(
       Effect.orElse(() => Effect.succeed(JSON.stringify(data, null, 2))),
     )
@@ -327,6 +335,12 @@ const enrichForensicsWithJira = (
             status: task.status,
             issueType: task.issueType,
             fetchedAt: new Date().toISOString(),
+            comments: (task.comments ?? []).map(c => ({
+              id: c.id,
+              author: c.author,
+              body: c.body,
+              created: c.created,
+            })),
           })
         }
       }
@@ -340,7 +354,18 @@ const enrichForensicsWithJira = (
     for (const key of allKeys) {
       const entry = cache.get(key)
       if (entry) {
-        result.set(key, new JiraTask({ key: entry.key, summary: entry.summary, status: entry.status, issueType: entry.issueType }))
+        result.set(key, new JiraTask({
+          key: entry.key,
+          summary: entry.summary,
+          status: entry.status,
+          issueType: entry.issueType,
+          comments: entry.comments.map(c => new JiraComment({
+            id: c.id,
+            author: c.author,
+            body: c.body,
+            created: c.created,
+          })),
+        }))
       }
     }
     return result

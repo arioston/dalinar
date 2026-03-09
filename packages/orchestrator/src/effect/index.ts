@@ -47,7 +47,7 @@ export {
   extractJsonEnvelope,
 } from "./services.js"
 
-export { JiraTask } from "./jira-schemas.js"
+export { JiraComment, JiraTask } from "./jira-schemas.js"
 
 export {
   CalendarEvent,
