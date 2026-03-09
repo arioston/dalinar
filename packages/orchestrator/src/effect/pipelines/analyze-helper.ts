@@ -276,32 +276,63 @@ const saveJiraCache = (root: string, cache: Map<string, JiraCacheEntryType>) =>
     )
   })
 
-// ── Forensics enrichment ──────────────────────────────────────────
-// Fetches Jira ticket details for ticket keys found in forensics.
+// ── Jira enrichment ──────────────────────────────────────────────
+// Fetches Jira ticket details for the epic, task, and forensics keys.
 // Uses persistent cache + rate limiter. Gracefully degrades.
 
 const JIRA_RATE_LIMIT = Math.max(1, Number(process.env.JIRA_RATE_LIMIT ?? 5)) || 5
 
-const enrichForensicsWithJira = (
+const taskToCacheEntry = (task: JiraTask): JiraCacheEntryType => ({
+  key: task.key,
+  summary: task.summary,
+  status: task.status,
+  issueType: task.issueType,
+  fetchedAt: new Date().toISOString(),
+  comments: (task.comments ?? []).map(c => ({
+    id: c.id,
+    author: c.author,
+    body: c.body,
+    created: c.created,
+  })),
+})
+
+const cacheEntryToTask = (entry: JiraCacheEntryType): JiraTask =>
+  new JiraTask({
+    key: entry.key,
+    summary: entry.summary,
+    status: entry.status,
+    issueType: entry.issueType,
+    comments: entry.comments.map(c => new JiraComment({
+      id: c.id,
+      author: c.author,
+      body: c.body,
+      created: c.created,
+    })),
+  })
+
+const enrichWithJira = (
   output: SazedAnalyzeOutput,
   root: string,
+  epicKey: string,
+  taskKey?: string,
 ) =>
   Effect.gen(function* () {
-    if (!output.forensicsSummary) return new Map<string, JiraTask>()
-
     const jira = yield* JiraService
 
-    // Collect unique Jira keys from all bug introductions
-    const allKeys = new Set(
-      output.forensicsSummary.bugIntroductions.flatMap(b => [...b.jiraTickets]),
-    )
-    if (allKeys.size === 0) return new Map<string, JiraTask>()
+    // Collect all keys: epic + task + forensics
+    const allKeys = new Set<string>([epicKey])
+    if (taskKey) allKeys.add(taskKey)
+    if (output.forensicsSummary) {
+      for (const b of output.forensicsSummary.bugIntroductions) {
+        for (const k of b.jiraTickets) allKeys.add(k)
+      }
+    }
 
     // Load persistent cache
     const cache = yield* loadJiraCache(root)
     const uncachedKeys = [...allKeys].filter(k => !cache.has(k))
 
-    yield* Effect.logInfo("Forensics Jira enrichment").pipe(
+    yield* Effect.logInfo("Jira enrichment").pipe(
       Effect.annotateLogs({
         totalKeys: String(allKeys.size),
         cached: String(allKeys.size - uncachedKeys.length),
@@ -327,50 +358,22 @@ const enrichForensicsWithJira = (
       )
 
       for (const [key, task] of fetched) {
-        if (task) {
-          cache.set(key, {
-            key,
-            summary: task.summary,
-            status: task.status,
-            issueType: task.issueType,
-            fetchedAt: new Date().toISOString(),
-            comments: (task.comments ?? []).map(c => ({
-              id: c.id,
-              author: c.author,
-              body: c.body,
-              created: c.created,
-            })),
-          })
-        }
+        if (task) cache.set(key, taskToCacheEntry(task))
       }
 
-      // Persist updated cache
       yield* saveJiraCache(root, cache)
     }
 
-    // Convert cache entries to JiraTask-like objects for the extraction rules
+    // Convert cache entries to JiraTask map
     const result = new Map<string, JiraTask>()
     for (const key of allKeys) {
       const entry = cache.get(key)
-      if (entry) {
-        result.set(key, new JiraTask({
-          key: entry.key,
-          summary: entry.summary,
-          status: entry.status,
-          issueType: entry.issueType,
-          comments: entry.comments.map(c => new JiraComment({
-            id: c.id,
-            author: c.author,
-            body: c.body,
-            created: c.created,
-          })),
-        }))
-      }
+      if (entry) result.set(key, cacheEntryToTask(entry))
     }
     return result
   }).pipe(
     Effect.catchAll((e) =>
-      Effect.logWarning(`Forensics Jira enrichment failed, continuing without: ${e}`).pipe(
+      Effect.logWarning(`Jira enrichment failed, continuing without: ${e}`).pipe(
         Effect.map(() => new Map<string, JiraTask>()),
       ),
     ),
@@ -487,9 +490,10 @@ export const analyzeTask = (opts: AnalyzeTaskOptions) =>
       )
     }
 
-    // Step 3.5: Enrich forensics with Jira ticket details (cache-backed, rate-limited)
-    const enrichedTickets = yield* enrichForensicsWithJira(result, opts.root ?? process.cwd()).pipe(
-      Effect.withLogSpan("forensics-enrichment"),
+    // Step 3.5: Fetch and cache Jira tickets (epic + task + forensics keys)
+    const root = opts.root ?? process.cwd()
+    const enrichedTickets = yield* enrichWithJira(result, root, opts.epicKey, opts.taskKey).pipe(
+      Effect.withLogSpan("jira-enrichment"),
     )
 
     // Step 4: Extract notes back to Jasnah (structured data, no regex parsing)

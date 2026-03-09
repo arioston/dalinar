@@ -302,7 +302,7 @@ describe("analyzeWithContextPipeline", () => {
         epicKey: "EPIC-1",
         root: "/tmp/test",
         stdout: true,
-      }).pipe(Effect.provide(TestLayer)),
+      }).pipe(Effect.scoped, Effect.provide(TestLayer)),
     )
 
     expect(result.markdown).toContain("Test Analysis")
@@ -315,7 +315,7 @@ describe("analyzeWithContextPipeline", () => {
         epicKey: "EPIC-1",
         root: "/tmp/test",
         stdout: true,
-      }).pipe(Effect.provide(FailLayer)),
+      }).pipe(Effect.scoped, Effect.provide(FailLayer)),
     )
 
     // Should fail with SazedError
