@@ -319,6 +319,7 @@ const enrichForensicsWithJira = (
           limiter(
             jira.fetchTask(key).pipe(
               Effect.map(task => [key, task] as const),
+              Effect.tapError((e) => Effect.logWarning(`Jira fetchTask failed for ${key}: ${e.message}`)),
               Effect.orElseSucceed(() => [key, null] as const),
             ),
           ),

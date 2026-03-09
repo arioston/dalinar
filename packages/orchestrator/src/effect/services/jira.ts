@@ -133,7 +133,10 @@ const makeJiraService = Effect.gen(function* () {
           ),
         )
 
-      if (result.exitCode !== 0) return null
+      if (result.exitCode !== 0) {
+        yield* Effect.logWarning(`Jira resolveKey subprocess failed for ${key}: ${result.stderr || `exit code ${result.exitCode}`}`)
+        return null
+      }
 
       const data = yield* decodeJiraResponse(JiraIssueResponse)(result.stdout).pipe(
         Effect.catchAll(() => Effect.succeed(null)),
@@ -158,6 +161,7 @@ const makeJiraService = Effect.gen(function* () {
         taskSummary: summary,
       } satisfies ResolvedKey
     }).pipe(
+      Effect.tapError((e) => Effect.logWarning(`Jira resolveKey failed for ${key}: ${e.message}`)),
       Effect.catchAll(() => Effect.succeed(null)),
       Effect.withSpan("jira-resolve-key"),
     )
