@@ -108,6 +108,16 @@ export const analyzeTask = (opts: AnalyzeTaskOptions) =>
     }
 
     // Step 3: Run Sazed analysis (returns structured JSON, errors via error channel)
+    if (opts.datastore?.introspect) {
+      yield* Effect.logInfo("Datastore introspection enabled").pipe(
+        Effect.annotateLogs({
+          provider: opts.datastore.provider ?? "relational",
+          ...(opts.datastore.env ? { env: opts.datastore.env } : {}),
+          ...(opts.datastore.targets ? { targets: opts.datastore.targets } : {}),
+          ...(opts.datastore.noCache ? { noDatastoreCache: "true" } : {}),
+        }),
+      )
+    }
     yield* Effect.logInfo("Starting Sazed analysis")
     const result = yield* sazed
       .analyze({
