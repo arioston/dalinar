@@ -190,6 +190,30 @@ const forensicsRule: ExtractionRule = {
   },
 }
 
+const ticketCommentsRule: ExtractionRule = {
+  name: "ticketComments",
+  priority: 8,
+  extract: (_output, ctx) => {
+    if (!ctx.enrichedTickets || ctx.enrichedTickets.size === 0) return []
+    const entries: ExtractEntry[] = []
+    for (const [key, ticket] of ctx.enrichedTickets) {
+      const comments = ticket.comments ?? []
+      if (comments.length === 0) continue
+      const commentLines = comments
+        .slice(0, 20)
+        .map(c => `- ${c.author ?? "unknown"} (${c.created.split("T")[0]}): ${c.body.slice(0, 300)}`)
+      entries.push({
+        type: "domain-fact",
+        summary: `Ticket comments: ${key} — ${ticket.summary}`.slice(0, 100),
+        content: commentLines.join("\n").slice(0, 2000),
+        tags: [...baseTags(ctx), "ticket-comments", key.toLowerCase()],
+        confidence: "medium" as const,
+      })
+    }
+    return entries
+  },
+}
+
 const ALL_RULES: ReadonlyArray<ExtractionRule> = [
   notesRule,
   contextSummaryRule,
@@ -199,6 +223,7 @@ const ALL_RULES: ReadonlyArray<ExtractionRule> = [
   impactSummaryRule,
   diffFromPreviousRule,
   forensicsRule,
+  ticketCommentsRule,
 ]
 
 function structuredNotesToEntries(
@@ -525,8 +550,25 @@ export const analyzeTask = (opts: AnalyzeTaskOptions) =>
       }
     }
 
+    // Append Jira ticket comments to markdown
+    let markdown = result.markdown
+    if (enrichedTickets.size > 0) {
+      const sections: string[] = []
+      for (const [key, ticket] of enrichedTickets) {
+        const comments = ticket.comments ?? []
+        if (comments.length === 0) continue
+        const lines = comments.slice(0, 20).map(c =>
+          `- **${c.author ?? "unknown"}** (${c.created.split("T")[0]}): ${c.body.slice(0, 500)}`
+        )
+        sections.push(`### ${key}: ${ticket.summary}\n\n${lines.join("\n")}`)
+      }
+      if (sections.length > 0) {
+        markdown += `\n\n## Jira Ticket Comments\n\n${sections.join("\n\n")}`
+      }
+    }
+
     return {
-      markdown: result.markdown,
+      markdown,
       memoriesUsed: capped.length,
       notesExtracted,
     } satisfies AnalyzeTaskResult
