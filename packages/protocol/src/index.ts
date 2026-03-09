@@ -56,6 +56,7 @@ export {
   SazedTechnicalDef,
   SazedTaskOutput,
   SazedNoteOutput,
+  SazedImpactSummary,
   SazedAnalyzeOutput,
   SazedSyncOutput,
   SazedStatusEntry,

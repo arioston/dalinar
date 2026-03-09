@@ -143,6 +143,21 @@ export const analyzeTask = (opts: AnalyzeTaskOptions) =>
         Effect.withLogSpan("sazed-analyze"),
       )
 
+    // Log impact summary if present
+    if (result.impactSummary) {
+      const s = result.impactSummary
+      yield* Effect.logInfo("Impact analysis included").pipe(
+        Effect.annotateLogs({
+          filesAnalyzed: String(s.filesAnalyzed),
+          directInvariants: String(s.directInvariants),
+          relatedInvariants: String(s.relatedInvariants),
+          ...(s.datastoreConstraints !== undefined ? { datastoreConstraints: String(s.datastoreConstraints) } : {}),
+          ...(s.datastoreProvider ? { datastoreProvider: s.datastoreProvider } : {}),
+          ...(s.datastoreTargets ? { datastoreTargets: s.datastoreTargets.join(",") } : {}),
+        }),
+      )
+    }
+
     // Step 4: Extract notes back to Jasnah (structured data, no regex parsing)
     yield* Effect.logInfo("Extracting notes to Jasnah")
     const epicKey = opts.epicKey

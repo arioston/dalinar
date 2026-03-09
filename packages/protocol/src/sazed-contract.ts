@@ -10,7 +10,7 @@ import { Schema } from "effect"
 
 // ── Contract version ─────────────────────────────────────────────
 
-export const SAZED_CONTRACT_VERSION = "1.0.0" as const
+export const SAZED_CONTRACT_VERSION = "1.1.0" as const
 
 // ── analyze --json ───────────────────────────────────────────────
 
@@ -42,6 +42,15 @@ export class SazedNoteOutput extends Schema.Class<SazedNoteOutput>("SazedNoteOut
   relatedNotes: Schema.Array(Schema.String),
 }) {}
 
+export class SazedImpactSummary extends Schema.Class<SazedImpactSummary>("SazedImpactSummary")({
+  filesAnalyzed: Schema.Number,
+  directInvariants: Schema.Number,
+  relatedInvariants: Schema.Number,
+  datastoreConstraints: Schema.optional(Schema.Number),
+  datastoreProvider: Schema.optional(Schema.String),
+  datastoreTargets: Schema.optional(Schema.Array(Schema.String)),
+}) {}
+
 export class SazedAnalyzeOutput extends Schema.Class<SazedAnalyzeOutput>("SazedAnalyzeOutput")({
   epicKey: Schema.String,
   epicSummary: Schema.String,
@@ -56,6 +65,7 @@ export class SazedAnalyzeOutput extends Schema.Class<SazedAnalyzeOutput>("SazedA
   markdown: Schema.String,
   basedOnCommit: Schema.String,
   createdAt: Schema.String,
+  impactSummary: Schema.optional(SazedImpactSummary),
 }) {}
 
 // ── sync --json ──────────────────────────────────────────────────
