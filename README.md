@@ -62,6 +62,62 @@ echo '<json>' | bun run packages/orchestrator/src/reflect.ts --sprint sprint-42
 bun run packages/orchestrator/src/vault-sync.ts
 ```
 
+### analyze-with-context
+
+Writes output to `.refinement/{KEY}-analysis.md` by default.
+
+```bash
+# Basic analysis (output to .refinement/EPIC-123-analysis.md)
+bun run packages/orchestrator/src/analyze-with-context.ts EPIC-123
+
+# Print to console instead of file
+bun run packages/orchestrator/src/analyze-with-context.ts EPIC-123 --stdout
+
+# All flags
+bun run packages/orchestrator/src/analyze-with-context.ts EPIC-123 \
+  --force        # Re-analyze even if nothing changed (bypass cache)
+  --notes        # Extract domain notes to Jasnah
+  --no-map       # Skip repo map (for A/B comparison)
+  --no-cache     # Skip exploration cache
+  --forensics    # Include git forensics (hotspots, temporal coupling)
+  --stdout       # Print to console instead of .refinement/ file
+
+# Increase timeout for heavy epics (default: 120s, min: 30s)
+SAZED_TIMEOUT=300 bun run packages/orchestrator/src/analyze-with-context.ts EPIC-123
+```
+
+### Analysis with datastore introspection
+
+Sazed can introspect PostgreSQL and Elasticsearch schemas during analysis to discover constraints (NOT NULL, CHECK, UNIQUE, FK, ENUM) and field mappings. This runs from `modules/sazed/`.
+
+```bash
+# PostgreSQL introspection (requires approval unless auto-approved)
+bun run packages/cli/src/main.ts analyze EPIC-123 \
+  --datastore-introspect \
+  --datastore-provider relational \
+  --datastore-env local \
+  --datastore-targets users,orders
+
+# Elasticsearch introspection
+bun run packages/cli/src/main.ts analyze EPIC-123 \
+  --datastore-introspect \
+  --datastore-provider elasticsearch \
+  --datastore-env local \
+  --datastore-targets products,inventory
+
+# Skip constraint cache (force fresh introspection)
+bun run packages/cli/src/main.ts analyze EPIC-123 \
+  --datastore-introspect --no-datastore-cache
+
+# Auto-approve without interactive prompt
+SAZED_AUTO_APPROVE_DB_INTROSPECTION=true \
+  bun run packages/cli/src/main.ts analyze EPIC-123 --datastore-introspect
+```
+
+Database connections are resolved via Jasnah's `execute_query.ts` using `QUERY_DB_<ENV>` environment variables (e.g. `QUERY_DB_LOCAL=postgres://user:pass@localhost:5432/mydb`). Results are cached with 24h TTL in `.refinement/db-constraints/` (relational) or `.refinement/es-mappings/` (elasticsearch).
+
+Deprecated flags `--db-introspect`, `--db-env`, `--impact-tables`, `--no-db-cache` still work and map to the relational provider.
+
 ## Sazed CLI
 
 All commands run from `modules/sazed/`. Accepts Jira keys or document files (.md, .pdf, .docx, .pptx, .xlsx).
@@ -115,6 +171,12 @@ bun run "$JASNAH/scripts/search-memory.ts" "authentication architecture"
 | `JIRA_API_TOKEN` | For Jira | Jira API token |
 | `JIRA_PROJECT_KEY` | For sync | Project key for subtask creation |
 | `WORK_LOG_PATH` | For vault-sync | Obsidian vault path |
+| `QUERY_DB_LOCAL` | For DB introspection | Postgres connection string for local env |
+| `QUERY_DB_STAGING` | For DB introspection | Postgres connection string for staging env |
+| `SAZED_TIMEOUT` | No | Sazed subprocess timeout in seconds (default: 120, min: 30) |
+| `SAZED_AUTO_APPROVE_DB_INTROSPECTION` | No | Skip interactive approval for DB queries (`true`) |
+| `QDRANT_URL` | For vector search | Qdrant Cloud URL (LanceDB used as local fallback) |
+| `QDRANT_API_KEY` | For vector search | Qdrant Cloud API key |
 
 Optional: `GIT_ROOT`, `OUTPUT_DIR`, `LLM_MODEL`, `TOOL_CALL_BUDGET` (default 25), `REFINEMENT_CONCURRENCY` (default 3).
 
