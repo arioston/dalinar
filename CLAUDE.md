@@ -25,31 +25,43 @@ Bun monorepo. Orchestrates Jasnah (memory), Sazed (planning), and Hoid (calendar
 
 ## Orchestrator Pipelines
 
-6 pipelines, each with legacy async + Effect.ts version (Effect tried first, falls back to legacy).
+7 pipelines via unified `@effect/cli` entry point. Legacy entry points delegate to the CLI.
 
-- **analyze-with-context**: `bun run packages/orchestrator/src/analyze-with-context.ts EPIC-XXX [--force] [--notes]`
-  Searches Jasnah → runs Sazed analysis → extracts knowledge back → vault sync
+```bash
+# Unified CLI (preferred)
+bun run packages/orchestrator/src/effect/cli.ts <command> [options]
 
-- **implement-ticket**: `bun run packages/orchestrator/src/implement-ticket.ts PROJ-123 [--analyze] [--worktree]`
+# Legacy entry points still work (delegate to CLI internally)
+bun run packages/orchestrator/src/analyze-with-context.ts EPIC-XXX
+```
+
+- **analyze**: `dalinar analyze EPIC-XXX [--force] [--notes] [--forensics] [--stdout] [--datastore-introspect]`
+  Searches Jasnah → runs Sazed analysis → enriches forensics with Jira (cached, rate-limited) → extracts knowledge back (8 extraction rules) → vault sync
+
+- **deep-analyze**: `dalinar deep-analyze EPIC-XXX [--force] [--notes] [--task-only]`
+  Per-task deep analysis with sequential reduce
+
+- **implement**: `dalinar implement PROJ-123 [--analyze] [--worktree]`
   Gathers context → optional analysis → optional worktree → outputs implementation plan
 
-- **audit**: `bun run packages/orchestrator/src/audit.ts [--extract] [--json]`
+- **audit**: `dalinar audit [--extract] [--json] [--roots <dir>]`
   Scans memory store for recurring blockers, decision oscillation, knowledge gaps
 
-- **dialectic**: `bun run packages/orchestrator/src/dialectic.ts "decision question" [--extract]`
+- **dialectic**: `dalinar dialectic "decision question" [--extract]`
   Adversarial reasoning — generates isolated opposing analyses for high-stakes decisions
 
-- **reflect**: `bun run packages/orchestrator/src/reflect.ts --sprint sprint-XX [--dry-run]`
+- **reflect**: `dalinar reflect --sprint sprint-XX [--dry-run]`
   Post-sprint retrospective capture — feeds corrections back as memories
 
-- **vault-sync**: `bun run packages/orchestrator/src/vault-sync.ts [project-root]`
+- **vault-sync**: `dalinar vault-sync [project-root]`
   Sync .memory/ to Obsidian vault Work Log folder (opt-in via `WORK_LOG_PATH`)
 
 ## Architecture
 
-- `packages/protocol/` — Shared types, retention math, secret detection, taxonomy, frontmatter, vault config
-- `packages/orchestrator/` — 6 cross-system pipelines (legacy + Effect.ts)
+- `packages/protocol/` — Shared types, retention math, secret detection, taxonomy, frontmatter, vault config, Sazed contract schemas (v1.2.0)
+- `packages/orchestrator/` — 7 cross-system pipelines via unified @effect/cli
   - `src/effect/` — Typed pipeline layer (services, errors, ticket state machine, WAL, context snapshots)
+  - `src/effect/cli.ts` — Unified CLI entry point with typed commands via `@effect/cli`
 - `modules/jasnah/` — Memory extraction and retrieval (git submodule)
 - `modules/sazed/` — Epic analysis and task decomposition (git submodule)
 - `modules/hoid/` — Calendar operations (git submodule)
@@ -57,12 +69,14 @@ Bun monorepo. Orchestrates Jasnah (memory), Sazed (planning), and Hoid (calendar
 
 ### Effect.ts Layer (packages/orchestrator/src/effect/)
 
-- **Services**: `JasnahService`, `SazedService`, `HoidService` — Context.Tag services wrapping subprocess calls
-- **Errors**: `Schema.TaggedError` types — `SubprocessError`, `JasnahError`, `SazedError`, `VaultSyncError`, `FileOperationError`, `TicketStateError`, `ParseError`, `HoidError`
-- **Runtime**: `OrchestratorLive` layer + `runCli` helper for error-to-exit-code mapping
-- **Ticket protocol**: State machine with `Data.tagged` unions + `Match.value` exhaustive transitions
+- **Services**: `JasnahService`, `SazedService`, `HoidService`, `JiraService` — Context.Tag services wrapping subprocess calls
+- **Errors**: `Schema.TaggedError` types — `SubprocessError`, `JasnahError`, `SazedError`, `VaultSyncError`, `FileOperationError`, `TicketStateError`, `ParseError`, `HoidError`, `JiraError`
+- **Runtime**: `OrchestratorLive` layer + `NodeRuntime.runMain` for signal handling and exit codes
+- **Ticket protocol**: State machine with `Data.TaggedEnum` + `Match.value` exhaustive transitions
 - **WAL**: Crash-safe `orders-next.json → orders.json` promotion via `Effect.acquireRelease`
 - **Context snapshots**: Schema.Class types + SHA-256 content hashing + Ref-based caching
+- **Knowledge extraction**: 8 composable extraction rules (pure functions) covering notes, context, acceptance criteria, communication flows, integration points, impact summaries, diffs, and forensics
+- **Forensics enrichment**: Post-hoc Jira ticket enrichment with persistent file cache (`.cache/jira-tickets.json`), rate limiting (`JIRA_RATE_LIMIT` env, default 5/s), and graceful degradation via `Effect.serviceOption`
 
 Tests: `bun test packages/orchestrator/src/effect/`
 
@@ -94,3 +108,6 @@ Tests: `bun test packages/orchestrator/src/effect/`
 - Note types: domain-fact, architecture, api-contract, glossary, lesson-learned
 - Retention: Ebbinghaus forgetting curve with type-specific half-life multipliers
 - Vault sync: opt-in via `WORK_LOG_PATH` env var (coexists with HoldGate in same vault)
+- `JIRA_RATE_LIMIT`: Max Jira API requests/sec during forensics enrichment (default: 5)
+- `SAZED_TIMEOUT`: Sazed subprocess timeout (default: 120s)
+- Jira ticket cache: `.cache/jira-tickets.json` — persistent, never expires. Clear manually or via future `dalinar cache clear --jira` command

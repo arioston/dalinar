@@ -1,1 +1,1 @@
-{"contractVersion":"1.1.0","data":{"notes":[{"slug":"auth-rule","title":"Auth Rule","type":"domain-fact","tags":["auth"],"retentionScore":0.85},{"slug":"api-versioning","title":"API Versioning Strategy","type":"api-contract","tags":["api","versioning"],"retentionScore":0.72}]}}
+{"contractVersion":"1.2.0","data":{"notes":[{"slug":"auth-rule","title":"Auth Rule","type":"domain-fact","tags":["auth"],"retentionScore":0.85},{"slug":"api-versioning","title":"API Versioning Strategy","type":"api-contract","tags":["api","versioning"],"retentionScore":0.72}]}}

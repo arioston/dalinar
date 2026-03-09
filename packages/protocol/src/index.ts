@@ -57,6 +57,8 @@ export {
   SazedTaskOutput,
   SazedNoteOutput,
   SazedImpactSummary,
+  SazedForensicsBugIntro,
+  SazedForensicsSummary,
   SazedAnalyzeOutput,
   SazedSyncOutput,
   SazedStatusEntry,

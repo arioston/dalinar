@@ -10,7 +10,7 @@ import { Schema } from "effect"
 
 // ── Contract version ─────────────────────────────────────────────
 
-export const SAZED_CONTRACT_VERSION = "1.1.0" as const
+export const SAZED_CONTRACT_VERSION = "1.2.0" as const
 
 // ── analyze --json ───────────────────────────────────────────────
 
@@ -51,6 +51,18 @@ export class SazedImpactSummary extends Schema.Class<SazedImpactSummary>("SazedI
   datastoreTargets: Schema.optional(Schema.Array(Schema.String)),
 }) {}
 
+export class SazedForensicsBugIntro extends Schema.Class<SazedForensicsBugIntro>("SazedForensicsBugIntro")({
+  filePath: Schema.String,
+  bugFixCount: Schema.Number,
+  jiraTickets: Schema.Array(Schema.String),
+}) {}
+
+export class SazedForensicsSummary extends Schema.Class<SazedForensicsSummary>("SazedForensicsSummary")({
+  bugIntroductions: Schema.Array(SazedForensicsBugIntro),
+  hotspotCount: Schema.Number,
+  totalCommitsAnalyzed: Schema.Number,
+}) {}
+
 export class SazedAnalyzeOutput extends Schema.Class<SazedAnalyzeOutput>("SazedAnalyzeOutput")({
   epicKey: Schema.String,
   epicSummary: Schema.String,
@@ -66,6 +78,7 @@ export class SazedAnalyzeOutput extends Schema.Class<SazedAnalyzeOutput>("SazedA
   basedOnCommit: Schema.String,
   createdAt: Schema.String,
   impactSummary: Schema.optional(SazedImpactSummary),
+  forensicsSummary: Schema.optional(SazedForensicsSummary),
 }) {}
 
 // ── sync --json ──────────────────────────────────────────────────

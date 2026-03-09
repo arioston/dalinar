@@ -1,51 +1,356 @@
-import { Effect } from "effect"
+import { Effect, Option, RateLimiter, Schema } from "effect"
+import { FileSystem } from "@effect/platform"
 import { JasnahService, SazedService, type ExtractEntry, type DatastoreOptions } from "../services.js"
 import type { SazedAnalyzeOutput } from "@dalinar/protocol"
+import { JiraService } from "../services/jira.js"
+import { JiraTask } from "../jira-schemas.js"
 
-// ── Structured note extraction ────────────────────────────────────
+// ── Extraction rules ──────────────────────────────────────────────
+// Each rule is a pure function: SazedAnalyzeOutput → ExtractEntry[].
+// Rules are composed by priority — lower = higher priority for budget.
 
-const MAX_NOTES = 8
+const MAX_NOTES = 15
 
-function structuredNotesToEntries(
-  output: SazedAnalyzeOutput,
-  ctx: { epicKey: string; taskKey?: string | undefined },
-): ExtractEntry[] {
+interface ExtractionCtx {
+  readonly epicKey: string
+  readonly taskKey?: string | undefined
+  readonly enrichedTickets?: ReadonlyMap<string, JiraTask>
+}
+
+interface ExtractionRule {
+  readonly name: string
+  readonly priority: number
+  readonly extract: (output: SazedAnalyzeOutput, ctx: ExtractionCtx) => ExtractEntry[]
+}
+
+const baseTags = (ctx: ExtractionCtx): string[] => {
   const tags = [ctx.epicKey.toLowerCase()]
   if (ctx.taskKey) tags.push(ctx.taskKey.toLowerCase())
+  return tags
+}
 
-  const entries: ExtractEntry[] = []
+const notesRule: ExtractionRule = {
+  name: "notes",
+  priority: 0,
+  extract: (output, ctx) => {
+    const tags = baseTags(ctx)
+    const entries: ExtractEntry[] = []
+    for (const note of output.notes) {
+      if (note.content.length < 30) continue
+      entries.push({
+        type: note.type,
+        summary: note.title.slice(0, 100),
+        content: note.content.slice(0, 2000),
+        tags: [...tags, ...note.tags.slice(0, 2)],
+        confidence: "high",
+      })
+    }
+    return entries
+  },
+}
 
-  for (const note of output.notes) {
-    if (note.content.length < 30) continue
-    entries.push({
-      type: note.type,
-      summary: note.title.slice(0, 100),
-      content: note.content.slice(0, 2000),
-      tags: [...tags, ...note.tags.slice(0, 2)],
-      confidence: "high",
-    })
-  }
-
-  if (output.contextSummary.length > 50) {
-    entries.push({
+const contextSummaryRule: ExtractionRule = {
+  name: "contextSummary",
+  priority: 1,
+  extract: (output, ctx) => {
+    if (output.contextSummary.length <= 50) return []
+    return [{
       type: "architecture",
       summary: `Architecture context for ${ctx.epicKey}`.slice(0, 100),
       content: output.contextSummary.slice(0, 2000),
-      tags: [...tags],
-      confidence: "medium",
-    })
-  }
-
-  if (entries.length > MAX_NOTES) {
-    entries.sort((a, b) => {
-      const order = { high: 0, medium: 1, low: 2 }
-      return (order[a.confidence] ?? 2) - (order[b.confidence] ?? 2)
-    })
-    entries.length = MAX_NOTES
-  }
-
-  return entries
+      tags: baseTags(ctx),
+      confidence: "medium" as const,
+    }]
+  },
 }
+
+const acceptanceCriteriaRule: ExtractionRule = {
+  name: "acceptanceCriteria",
+  priority: 2,
+  extract: (output, ctx) => {
+    const entries: ExtractEntry[] = []
+    for (const task of output.tasks) {
+      if (task.acceptanceCriteria.length === 0) continue
+      const criteria = task.acceptanceCriteria.map((c, i) => `${i + 1}. ${c}`).join("\n")
+      entries.push({
+        type: "domain-fact",
+        summary: `Acceptance criteria for ${task.id}: ${task.title}`.slice(0, 100),
+        content: criteria.slice(0, 2000),
+        tags: [...baseTags(ctx), task.id.toLowerCase()],
+        confidence: "high",
+      })
+    }
+    return entries
+  },
+}
+
+const communicationFlowRule: ExtractionRule = {
+  name: "communicationFlow",
+  priority: 3,
+  extract: (output, ctx) => {
+    if (!output.communicationFlow.applicable || !output.communicationFlow.mermaidDiagram) return []
+    return [{
+      type: "api-contract",
+      summary: `Communication flow for ${ctx.epicKey}`.slice(0, 100),
+      content: output.communicationFlow.mermaidDiagram.slice(0, 2000),
+      tags: [...baseTags(ctx), "communication-flow"],
+      confidence: "medium" as const,
+    }]
+  },
+}
+
+const integrationPointsRule: ExtractionRule = {
+  name: "integrationPoints",
+  priority: 4,
+  extract: (output, ctx) => {
+    const allPoints = new Set<string>()
+    for (const task of output.tasks) {
+      for (const point of task.technicalDefinition.integrationPoints) {
+        allPoints.add(point)
+      }
+    }
+    if (allPoints.size === 0) return []
+    const content = [...allPoints].map((p, i) => `${i + 1}. ${p}`).join("\n")
+    return [{
+      type: "architecture",
+      summary: `Integration points for ${ctx.epicKey}`.slice(0, 100),
+      content: content.slice(0, 2000),
+      tags: [...baseTags(ctx), "integration-points"],
+      confidence: "medium" as const,
+    }]
+  },
+}
+
+const impactSummaryRule: ExtractionRule = {
+  name: "impactSummary",
+  priority: 5,
+  extract: (output, ctx) => {
+    if (!output.impactSummary) return []
+    const s = output.impactSummary
+    const lines = [
+      `Files analyzed: ${s.filesAnalyzed}`,
+      `Direct invariants: ${s.directInvariants}`,
+      `Related invariants: ${s.relatedInvariants}`,
+    ]
+    if (s.datastoreConstraints !== undefined) lines.push(`Datastore constraints: ${s.datastoreConstraints}`)
+    if (s.datastoreProvider) lines.push(`Provider: ${s.datastoreProvider}`)
+    if (s.datastoreTargets) lines.push(`Targets: ${s.datastoreTargets.join(", ")}`)
+    return [{
+      type: "domain-fact",
+      summary: `Impact analysis for ${ctx.epicKey}`.slice(0, 100),
+      content: lines.join("\n"),
+      tags: [...baseTags(ctx), "impact-analysis"],
+      confidence: "medium" as const,
+    }]
+  },
+}
+
+const diffFromPreviousRule: ExtractionRule = {
+  name: "diffFromPrevious",
+  priority: 6,
+  extract: (output, ctx) => {
+    if (!output.diffFromPrevious) return []
+    return [{
+      type: "lesson-learned",
+      summary: `Analysis diff for ${ctx.epicKey}`.slice(0, 100),
+      content: output.diffFromPrevious.slice(0, 2000),
+      tags: [...baseTags(ctx), "analysis-diff"],
+      confidence: "low" as const,
+    }]
+  },
+}
+
+const forensicsRule: ExtractionRule = {
+  name: "forensics",
+  priority: 7,
+  extract: (output, ctx) => {
+    if (!output.forensicsSummary) return []
+    const fs = output.forensicsSummary
+    if (fs.bugIntroductions.length === 0) return []
+    const lines = [`Total commits analyzed: ${fs.totalCommitsAnalyzed}`, `Hotspots: ${fs.hotspotCount}`, ""]
+    for (const bug of fs.bugIntroductions.slice(0, 10)) {
+      let line = `- ${bug.filePath}: ${bug.bugFixCount} bug fixes`
+      if (bug.jiraTickets.length > 0) {
+        const ticketDetails = bug.jiraTickets.map(key => {
+          const ticket = ctx.enrichedTickets?.get(key)
+          return ticket ? `${key} (${ticket.summary})` : key
+        })
+        line += ` [${ticketDetails.join(", ")}]`
+      }
+      lines.push(line)
+    }
+
+    return [{
+      type: "lesson-learned",
+      summary: `Forensics: ${fs.bugIntroductions.length} bug-prone files in ${ctx.epicKey}`.slice(0, 100),
+      content: lines.join("\n").slice(0, 2000),
+      tags: [...baseTags(ctx), "forensics"],
+      confidence: "medium" as const,
+    }]
+  },
+}
+
+const ALL_RULES: ReadonlyArray<ExtractionRule> = [
+  notesRule,
+  contextSummaryRule,
+  acceptanceCriteriaRule,
+  communicationFlowRule,
+  integrationPointsRule,
+  impactSummaryRule,
+  diffFromPreviousRule,
+  forensicsRule,
+]
+
+function structuredNotesToEntries(
+  output: SazedAnalyzeOutput,
+  ctx: ExtractionCtx,
+): ExtractEntry[] {
+  const allEntries = ALL_RULES
+    .toSorted((a, b) => a.priority - b.priority)
+    .flatMap(rule => rule.extract(output, ctx))
+
+  if (allEntries.length <= MAX_NOTES) return allEntries
+
+  allEntries.sort((a, b) => {
+    const order = { high: 0, medium: 1, low: 2 }
+    return (order[a.confidence] ?? 2) - (order[b.confidence] ?? 2)
+  })
+  return allEntries.slice(0, MAX_NOTES)
+}
+
+// ── Jira ticket cache ─────────────────────────────────────────────
+// Persistent file-backed cache at .cache/jira-tickets.json.
+// Never expires — use `dalinar cache clear --jira` to invalidate.
+
+const JiraCacheEntry = Schema.Struct({
+  key: Schema.String,
+  summary: Schema.String,
+  status: Schema.String,
+  issueType: Schema.String,
+  fetchedAt: Schema.String,
+})
+
+const JiraCacheFile = Schema.Struct({
+  version: Schema.Literal(1),
+  tickets: Schema.Array(JiraCacheEntry),
+})
+
+type JiraCacheEntryType = typeof JiraCacheEntry.Type
+
+const CACHE_PATH = ".cache/jira-tickets.json"
+
+const loadJiraCache = (root: string) =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem
+    const path = `${root}/${CACHE_PATH}`
+    const raw = yield* fs.readFileString(path).pipe(Effect.orElseSucceed(() => ""))
+    if (!raw) return new Map<string, JiraCacheEntryType>()
+    const decoded = yield* Schema.decodeUnknown(Schema.parseJson(JiraCacheFile))(raw).pipe(
+      Effect.orElseSucceed(() => ({ version: 1 as const, tickets: [] })),
+    )
+    return new Map(decoded.tickets.map(t => [t.key, t]))
+  })
+
+const saveJiraCache = (root: string, cache: Map<string, JiraCacheEntryType>) =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem
+    const dir = `${root}/.cache`
+    const path = `${root}/${CACHE_PATH}`
+    yield* fs.makeDirectory(dir, { recursive: true }).pipe(
+      Effect.catchAll((e) => Effect.logDebug(`Jira cache dir creation failed: ${e.message}`)),
+    )
+    const data = { version: 1 as const, tickets: [...cache.values()] }
+    const json = yield* Schema.encode(Schema.parseJson(JiraCacheFile))(data).pipe(
+      Effect.orElse(() => Effect.succeed(JSON.stringify(data, null, 2))),
+    )
+    yield* fs.writeFileString(path, json).pipe(
+      Effect.catchAll((e) => Effect.logDebug(`Jira cache write failed: ${e.message}`)),
+    )
+  })
+
+// ── Forensics enrichment ──────────────────────────────────────────
+// Fetches Jira ticket details for ticket keys found in forensics.
+// Uses persistent cache + rate limiter. Gracefully degrades.
+
+const JIRA_RATE_LIMIT = Math.max(1, Number(process.env.JIRA_RATE_LIMIT ?? 5)) || 5
+
+const enrichForensicsWithJira = (
+  output: SazedAnalyzeOutput,
+  root: string,
+) =>
+  Effect.gen(function* () {
+    if (!output.forensicsSummary) return new Map<string, JiraTask>()
+
+    const jiraOption = yield* Effect.serviceOption(JiraService)
+    if (Option.isNone(jiraOption)) return new Map<string, JiraTask>()
+    const jira = jiraOption.value
+
+    // Collect unique Jira keys from all bug introductions
+    const allKeys = new Set(
+      output.forensicsSummary.bugIntroductions.flatMap(b => [...b.jiraTickets]),
+    )
+    if (allKeys.size === 0) return new Map<string, JiraTask>()
+
+    // Load persistent cache
+    const cache = yield* loadJiraCache(root)
+    const uncachedKeys = [...allKeys].filter(k => !cache.has(k))
+
+    yield* Effect.logInfo("Forensics Jira enrichment").pipe(
+      Effect.annotateLogs({
+        totalKeys: String(allKeys.size),
+        cached: String(allKeys.size - uncachedKeys.length),
+        toFetch: String(uncachedKeys.length),
+      }),
+    )
+
+    // Fetch uncached tickets with rate limiting
+    if (uncachedKeys.length > 0) {
+      const limiter = yield* RateLimiter.make({ limit: JIRA_RATE_LIMIT, interval: "1 seconds" })
+
+      const fetched = yield* Effect.forEach(
+        uncachedKeys,
+        (key) =>
+          limiter(
+            jira.fetchTask(key).pipe(
+              Effect.map(task => [key, task] as const),
+              Effect.orElseSucceed(() => [key, null] as const),
+            ),
+          ),
+        { concurrency: JIRA_RATE_LIMIT },
+      )
+
+      for (const [key, task] of fetched) {
+        if (task) {
+          cache.set(key, {
+            key,
+            summary: task.summary,
+            status: task.status,
+            issueType: task.issueType,
+            fetchedAt: new Date().toISOString(),
+          })
+        }
+      }
+
+      // Persist updated cache
+      yield* saveJiraCache(root, cache)
+    }
+
+    // Convert cache entries to JiraTask-like objects for the extraction rules
+    const result = new Map<string, JiraTask>()
+    for (const key of allKeys) {
+      const entry = cache.get(key)
+      if (entry) {
+        result.set(key, new JiraTask({ key: entry.key, summary: entry.summary, status: entry.status, issueType: entry.issueType }))
+      }
+    }
+    return result
+  }).pipe(
+    Effect.catchAll((e) =>
+      Effect.logWarning(`Forensics Jira enrichment failed, continuing without: ${e}`).pipe(
+        Effect.map(() => new Map<string, JiraTask>()),
+      ),
+    ),
+  )
 
 // ── Shared analysis helper ────────────────────────────────────────
 // Reusable building block for both analyzeWithContextPipeline and
@@ -158,11 +463,16 @@ export const analyzeTask = (opts: AnalyzeTaskOptions) =>
       )
     }
 
+    // Step 3.5: Enrich forensics with Jira ticket details (cache-backed, rate-limited)
+    const enrichedTickets = yield* enrichForensicsWithJira(result, opts.root ?? process.cwd()).pipe(
+      Effect.withLogSpan("forensics-enrichment"),
+    )
+
     // Step 4: Extract notes back to Jasnah (structured data, no regex parsing)
     yield* Effect.logInfo("Extracting notes to Jasnah")
     const epicKey = opts.epicKey
     const taskKey = opts.taskKey
-    const newNotes = structuredNotesToEntries(result, { epicKey, taskKey })
+    const newNotes = structuredNotesToEntries(result, { epicKey, taskKey, enrichedTickets })
 
     const source = taskKey
       ? `dalinar-analyze-${epicKey}-task-${taskKey}`

@@ -7,6 +7,7 @@ bun.lock
 .claude/
 .refinement
 .specs
+.cache/
 .env
 auth.json
 
