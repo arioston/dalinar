@@ -372,6 +372,7 @@ const enrichWithJira = (
     }
     return result
   }).pipe(
+    Effect.scoped,
     Effect.catchAll((e) =>
       Effect.logWarning(`Jira enrichment failed, continuing without: ${e}`).pipe(
         Effect.map(() => new Map<string, JiraTask>()),
