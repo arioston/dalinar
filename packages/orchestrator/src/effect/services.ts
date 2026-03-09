@@ -159,29 +159,23 @@ export class JasnahService extends Context.Tag("@dalinar/JasnahService")<
 
 const MemorySearchResultArray = Schema.Array(MemorySearchResultSchema)
 
-function parseSearchOutput(stdout: string): MemorySearchResult[] {
-  if (!stdout) return []
-  try {
-    const parsed = JSON.parse(stdout)
-    if (Array.isArray(parsed)) {
-      const decoded = Schema.decodeUnknownSync(MemorySearchResultArray)(parsed)
-      return decoded as MemorySearchResult[]
-    }
-  } catch {
-    // Output is human-readable text or failed schema validation
-  }
-  return [
-    {
-      memory_id: "search-context",
-      type: "mixed",
-      summary: "Prior context from Jasnah memories",
-      content: stdout,
-      tags: [],
-      confidence: "high",
-      score: 1.0,
-      retention: 1.0,
-    },
-  ]
+const parseSearchOutput = (stdout: string) => {
+  if (!stdout) return Effect.succeed([] as MemorySearchResult[])
+  return Schema.decodeUnknown(Schema.parseJson(MemorySearchResultArray))(stdout).pipe(
+    Effect.map((results): MemorySearchResult[] => [...results]),
+    Effect.orElseSucceed((): MemorySearchResult[] => [
+      {
+        memory_id: "search-context",
+        type: "mixed",
+        summary: "Prior context from Jasnah memories",
+        content: stdout,
+        tags: [],
+        confidence: "high",
+        score: 1.0,
+        retention: 1.0,
+      },
+    ]),
+  )
 }
 
 const makeJasnah = Effect.gen(function* () {
@@ -223,7 +217,7 @@ const makeJasnah = Effect.gen(function* () {
         return [] as MemorySearchResult[]
       }
 
-      return parseSearchOutput(result.stdout)
+      return yield* parseSearchOutput(result.stdout)
     })
 
   const searchContextForEpic: JasnahServiceShape["searchContextForEpic"] = (
@@ -338,13 +332,13 @@ export interface DatastoreOptions {
 export interface AnalyzeOptions {
   epicKey: string
   context?: string | undefined
-  force?: boolean
-  notes?: boolean
-  noMap?: boolean
-  noCache?: boolean
-  forensics?: boolean
-  stdout?: boolean
-  datastore?: DatastoreOptions
+  force?: boolean | undefined
+  notes?: boolean | undefined
+  noMap?: boolean | undefined
+  noCache?: boolean | undefined
+  forensics?: boolean | undefined
+  stdout?: boolean | undefined
+  datastore?: DatastoreOptions | undefined
 }
 
 export interface SyncOptions {

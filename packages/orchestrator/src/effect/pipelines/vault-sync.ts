@@ -1,4 +1,5 @@
 import { Effect } from "effect"
+import { FileSystem } from "@effect/platform"
 import { resolve } from "path"
 import { resolveVaultConfig, vaultProjectPath } from "@dalinar/protocol"
 import { VaultSyncError } from "../errors.js"
@@ -66,7 +67,7 @@ export const initWorkLogPipeline = (
       return { created: false, reason: "WORK_LOG_PATH not set" }
     }
 
-    const subprocess = yield* SubprocessService
+    const fs = yield* FileSystem.FileSystem
     const globalDirs = [
       "architecture",
       "domain-facts",
@@ -75,20 +76,13 @@ export const initWorkLogPipeline = (
       "lessons-learned",
     ]
 
-    for (const dir of globalDirs) {
-      yield* subprocess
-        .run("mkdir", {
-          args: ["-p", `${config.workLogPath}/_global/${dir}`],
-          rawCommand: true,
-          nothrow: true,
-          timeout: "10 seconds",
-        })
-        .pipe(
-          Effect.mapError(
-            (e) => new VaultSyncError({ message: `Failed to create directory: ${dir}`, cause: e }),
-          ),
-        )
-    }
+    yield* Effect.forEach(globalDirs, (dir) =>
+      fs.makeDirectory(`${config.workLogPath}/_global/${dir}`, { recursive: true }).pipe(
+        Effect.mapError(
+          (e) => new VaultSyncError({ message: `Failed to create directory: ${dir}`, cause: e }),
+        ),
+      ),
+    )
 
     return { created: true, path: config.workLogPath }
   }).pipe(Effect.withSpan("init-work-log"))

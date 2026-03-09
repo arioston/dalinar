@@ -123,12 +123,12 @@ export const analyzeTask = (opts: AnalyzeTaskOptions) =>
       .analyze({
         epicKey: opts.epicKey,
         context: contextBlock,
-        ...(opts.force ? { force: opts.force } : {}),
-        ...(opts.notes ? { notes: opts.notes } : {}),
-        ...(opts.noMap ? { noMap: opts.noMap } : {}),
-        ...(opts.noCache ? { noCache: opts.noCache } : {}),
-        ...(opts.forensics ? { forensics: opts.forensics } : {}),
-        ...(opts.datastore ? { datastore: opts.datastore } : {}),
+        force: opts.force,
+        notes: opts.notes,
+        noMap: opts.noMap,
+        noCache: opts.noCache,
+        forensics: opts.forensics,
+        datastore: opts.datastore,
       })
       .pipe(
         Effect.tapError((e) =>

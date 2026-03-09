@@ -2,47 +2,19 @@
 /**
  * audit — Cross-session pattern detection.
  *
- * Scans the memory store for recurring patterns across sessions and epics.
- *
  * Usage:
  *   bun run packages/orchestrator/src/audit.ts
- *   bun run packages/orchestrator/src/audit.ts --extract   (write findings as memories)
- *   bun run packages/orchestrator/src/audit.ts --json      (output as JSON)
- *   bun run packages/orchestrator/src/audit.ts --roots ~/workspace  (scan all projects)
+ *   bun run packages/orchestrator/src/audit.ts --extract
+ *   bun run packages/orchestrator/src/audit.ts --json
+ *   bun run packages/orchestrator/src/audit.ts --roots ~/workspace
+ *
+ * Or via unified CLI:
+ *   bun run packages/orchestrator/src/effect/cli.ts audit --extract --json
  */
 
-import { resolve } from "path"
-
-// ── CLI parsing ───────────────────────────────────────────────────
-
-function parseArgs(argv: string[]): { root: string; roots?: string | undefined; extract: boolean; json: boolean } {
-  const args = argv.slice(2)
-  const rootsIdx = args.indexOf("--roots")
-  return {
-    root: process.cwd(),
-    roots: rootsIdx !== -1 && args[rootsIdx + 1] ? resolve(args[rootsIdx + 1]) : undefined,
-    extract: args.includes("--extract"),
-    json: args.includes("--json"),
-  }
-}
-
-// ── Run ───────────────────────────────────────────────────────────
-
+// Legacy entry point — delegates to @effect/cli
 if (import.meta.main) {
-  const opts = parseArgs(process.argv)
-
-  const { Effect } = await import("effect")
-  const { auditPipeline } = await import("./effect/pipelines/audit.js")
-  const { OrchestratorLive, runCli } = await import("./effect/runtime.js")
-
-  runCli(
-    auditPipeline(opts.root, {
-      rootsBase: opts.roots,
-      extract: opts.extract,
-      json: opts.json,
-    }).pipe(
-      Effect.provide(OrchestratorLive),
-      Effect.asVoid,
-    ),
-  )
+  const { runCliApp } = await import("./effect/cli.js")
+  const args = [...process.argv.slice(0, 2), "audit", ...process.argv.slice(2)]
+  runCliApp(args)
 }

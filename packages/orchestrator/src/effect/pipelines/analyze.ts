@@ -39,12 +39,12 @@ export const analyzeWithContextPipeline = (
       epicKey,
       taskKey,
       root: opts.root,
-      ...(opts.force ? { force: opts.force } : {}),
-      ...(opts.notes ? { notes: opts.notes } : {}),
-      ...(opts.noMap ? { noMap: opts.noMap } : {}),
-      ...(opts.noCache ? { noCache: opts.noCache } : {}),
-      ...(opts.forensics ? { forensics: opts.forensics } : {}),
-      ...(opts.datastore ? { datastore: opts.datastore } : {}),
+      force: opts.force,
+      notes: opts.notes,
+      noMap: opts.noMap,
+      noCache: opts.noCache,
+      forensics: opts.forensics,
+      datastore: opts.datastore,
     })
 
     yield* Effect.logInfo("Analysis complete").pipe(

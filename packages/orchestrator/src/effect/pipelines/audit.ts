@@ -345,40 +345,42 @@ const loadMemoriesFromRoot = (root: string, project?: string) =>
   Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem
     const memoryRoot = resolve(root, ".memory")
-    const entries: MemoryEntry[] = []
 
-    for (const dir of MEMORY_DIRS) {
+    const nested = yield* Effect.forEach(MEMORY_DIRS, (dir) => {
       const dirPath = resolve(memoryRoot, dir)
-      const files = yield* fs.readDirectory(dirPath).pipe(
+      return fs.readDirectory(dirPath).pipe(
         Effect.catchAll(() => Effect.succeed([] as string[])),
+        Effect.flatMap((files) =>
+          Effect.forEach(
+            files.filter((f) => f.endsWith(".md")),
+            (file) =>
+              fs.readFileString(resolve(dirPath, file)).pipe(
+                Effect.map((raw): MemoryEntry | null => {
+                  const { frontmatter, content } = parseFrontmatter(raw)
+                  return {
+                    id: (frontmatter.id as string) ?? basename(file, ".md"),
+                    type: (frontmatter.type as string) ?? dir,
+                    summary:
+                      (frontmatter.summary as string) || extractFirstLine(content),
+                    content,
+                    tags: Array.isArray(frontmatter.tags)
+                      ? (frontmatter.tags as string[])
+                      : [],
+                    confidence: (frontmatter.confidence as string) ?? "medium",
+                    createdAt: frontmatter.createdAt as string | undefined,
+                    source: frontmatter.source as string | undefined,
+                    project,
+                  }
+                }),
+                Effect.catchAll(() => Effect.succeed(null as MemoryEntry | null)),
+              ),
+            { concurrency: "unbounded" },
+          ),
+        ),
       )
+    }, { concurrency: "unbounded" })
 
-      for (const file of files) {
-        if (!file.endsWith(".md")) continue
-        const entry = yield* fs.readFileString(resolve(dirPath, file)).pipe(
-          Effect.map((raw) => {
-            const { frontmatter, content } = parseFrontmatter(raw)
-            return {
-              id: (frontmatter.id as string) ?? basename(file, ".md"),
-              type: (frontmatter.type as string) ?? dir,
-              summary:
-                (frontmatter.summary as string) || extractFirstLine(content),
-              content,
-              tags: Array.isArray(frontmatter.tags)
-                ? (frontmatter.tags as string[])
-                : [],
-              confidence: (frontmatter.confidence as string) ?? "medium",
-              createdAt: frontmatter.createdAt as string | undefined,
-              source: frontmatter.source as string | undefined,
-              project,
-            } satisfies MemoryEntry
-          }),
-          Effect.catchAll(() => Effect.succeed(null)),
-        )
-        if (entry) entries.push(entry)
-      }
-    }
-    return entries
+    return nested.flat().filter((e): e is MemoryEntry => e !== null)
   }).pipe(Effect.orElseSucceed(() => [] as MemoryEntry[]))
 
 const loadMemories = (root: string, rootsBase?: string) =>
@@ -394,15 +396,15 @@ const loadMemories = (root: string, rootsBase?: string) =>
       return { entries: [] as MemoryEntry[], projects: undefined as { name: string; count: number }[] | undefined }
     }
 
-    const allEntries: MemoryEntry[] = []
-    const projects: { name: string; count: number }[] = []
+    const results = yield* Effect.forEach(roots, ({ root: r, project }) =>
+      loadMemoriesFromRoot(r, project).pipe(
+        Effect.map((entries) => ({ project, entries })),
+      ),
+      { concurrency: "unbounded" },
+    )
 
-    for (const { root: r, project } of roots) {
-      const entries = yield* loadMemoriesFromRoot(r, project)
-      allEntries.push(...entries)
-      projects.push({ name: project, count: entries.length })
-    }
-
+    const allEntries = results.flatMap((r) => r.entries)
+    const projects = results.map((r) => ({ name: r.project, count: r.entries.length }))
     projects.sort((a, b) => b.count - a.count)
     return { entries: allEntries, projects }
   })

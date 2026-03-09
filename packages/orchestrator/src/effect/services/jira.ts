@@ -3,6 +3,7 @@ import { JiraError } from "../errors.js"
 import { JiraTask } from "../jira-schemas.js"
 import { SubprocessService } from "../subprocess.js"
 import { resolveJiraScript } from "../paths.js"
+import { extractJsonEnvelope } from "../services.js"
 
 // ── ResolvedKey ─────────────────────────────────────────────────
 
@@ -45,37 +46,13 @@ type JiraIssueFieldsType = typeof JiraIssueFields.Type
 
 // ── Decode helpers ──────────────────────────────────────────────
 
-/** Extract the first JSON line from mixed stdout (logs + JSON). */
-const extractJsonLine = (stdout: string): Effect.Effect<string, JiraError> =>
-  Effect.try({
-    try: () => {
-      const jsonLine = stdout.split("\n").find((l) => l.startsWith("{") || l.startsWith("["))
-      if (!jsonLine) throw new Error("No JSON found in stdout")
-      return jsonLine
-    },
-    catch: () =>
-      new JiraError({
-        message: "No JSON found in Jira CLI stdout",
-        operation: "decodeResponse",
-      }),
-  })
-
 /** Decode a JSON string through a Schema, mapping errors to JiraError. */
 const decodeJiraResponse = <A, I>(schema: Schema.Schema<A, I, never>) =>
-  (stdout: string): Effect.Effect<A, JiraError> =>
-    extractJsonLine(stdout).pipe(
-      Effect.flatMap((jsonLine) =>
-        Effect.try({
-          try: () => JSON.parse(jsonLine),
-          catch: () =>
-            new JiraError({
-              message: "Failed to parse JSON from Jira stdout",
-              operation: "decodeResponse",
-            }),
-        }),
-      ),
-      Effect.flatMap((parsed) =>
-        Schema.decodeUnknown(schema)(parsed).pipe(
+  (stdout: string): Effect.Effect<A, JiraError> => {
+    const { json, hadNoise } = extractJsonEnvelope(stdout)
+    return (hadNoise ? Effect.logWarning("Jira subprocess emitted non-JSON prefix before JSON payload") : Effect.void).pipe(
+      Effect.flatMap(() =>
+        Schema.decodeUnknown(Schema.parseJson(schema))(json).pipe(
           Effect.mapError((e) =>
             new JiraError({
               message: `Schema decode failed: ${e.message}`,
@@ -85,6 +62,7 @@ const decodeJiraResponse = <A, I>(schema: Schema.Schema<A, I, never>) =>
         ),
       ),
     )
+  }
 
 // ── JiraService ─────────────────────────────────────────────────
 

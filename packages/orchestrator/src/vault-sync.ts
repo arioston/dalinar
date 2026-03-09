@@ -6,26 +6,14 @@
  *
  * Usage:
  *   bun run packages/orchestrator/src/vault-sync.ts [project-root]
+ *
+ * Or via unified CLI:
+ *   bun run packages/orchestrator/src/effect/cli.ts vault-sync [project-root]
  */
 
-// ── CLI ───────────────────────────────────────────────────────────
-
+// Legacy entry point — delegates to @effect/cli
 if (import.meta.main) {
-  const root = process.argv[2] ?? process.cwd()
-
-  const { Effect } = await import("effect")
-  const { vaultSyncPipeline } = await import("./effect/pipelines/vault-sync.js")
-  const { OrchestratorLive, runCli } = await import("./effect/runtime.js")
-
-  runCli(
-    vaultSyncPipeline(root).pipe(
-      Effect.tap((result) =>
-        result.synced
-          ? Effect.logInfo(`Synced to ${result.target}`)
-          : Effect.logInfo(`Skipped: ${result.reason}`),
-      ),
-      Effect.provide(OrchestratorLive),
-      Effect.asVoid,
-    ),
-  )
+  const { runCliApp } = await import("./effect/cli.js")
+  const args = [...process.argv.slice(0, 2), "vault-sync", ...process.argv.slice(2)]
+  runCliApp(args)
 }

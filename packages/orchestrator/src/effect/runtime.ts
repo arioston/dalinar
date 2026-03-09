@@ -68,6 +68,16 @@ export const exitCodeForError = (error: OrchestratorError): number =>
     Match.exhaustive,
   )
 
+const errorAnnotations = (error: OrchestratorError): Record<string, string> => {
+  const base: Record<string, string> = { errorTag: error._tag, errorMessage: error.message }
+  for (const [k, v] of Object.entries(error)) {
+    if (v !== undefined && k !== "_tag" && k !== "message" && k !== "cause" && typeof v !== "object") {
+      base[k] = String(v)
+    }
+  }
+  return base
+}
+
 export const runCli = (
   effect: Effect.Effect<void, OrchestratorError, never>,
 ): void => {
@@ -91,24 +101,11 @@ export const runCli = (
 
   Effect.runPromise(
     withChecks.pipe(
-      Effect.tapError((error) => {
-        const annotations: Record<string, string> = {
-          errorTag: error._tag,
-          errorMessage: error.message,
-        }
-        if ("epicKey" in error && error.epicKey) annotations.epicKey = error.epicKey
-        if ("command" in error && error.command) annotations.command = error.command
-        if ("category" in error && error.category) annotations.category = error.category
-        if ("exitCode" in error && error.exitCode !== undefined) annotations.exitCode = String(error.exitCode)
-        if ("stderr" in error && error.stderr) annotations.stderr = error.stderr
-        if ("operation" in error && error.operation) annotations.operation = error.operation
-        if ("filePath" in error && error.filePath) annotations.filePath = error.filePath
-        if ("ticketKey" in error && error.ticketKey) annotations.ticketKey = error.ticketKey
-        if ("variable" in error && error.variable) annotations.variable = error.variable
-        return Effect.logError("[dalinar] Pipeline failed").pipe(
-          Effect.annotateLogs(annotations),
-        )
-      }),
+      Effect.tapError((error) =>
+        Effect.logError("[dalinar] Pipeline failed").pipe(
+          Effect.annotateLogs(errorAnnotations(error)),
+        ),
+      ),
       Effect.catchAll((error) =>
         Effect.sync(() => {
           process.exitCode = exitCodeForError(error)
