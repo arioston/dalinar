@@ -20,8 +20,27 @@ function parseArgs(argv: string[]) {
   const epicKey = args.find((a) => !a.startsWith("--"))
   if (!epicKey) {
     console.error("Usage: analyze-with-context <KEY> [--force] [--notes] [--no-map] [--no-cache] [--forensics] [--stdout]")
+    console.error("  Datastore: [--datastore-introspect] [--datastore-provider relational|elasticsearch]")
+    console.error("             [--datastore-env <env>] [--datastore-targets <t1,t2>] [--no-datastore-cache]")
     process.exit(1)
   }
+
+  const flagValue = (flag: string): string | undefined => {
+    const idx = args.indexOf(flag)
+    return idx !== -1 && idx + 1 < args.length && !args[idx + 1].startsWith("--")
+      ? args[idx + 1]
+      : undefined
+  }
+
+  const datastore = args.includes("--datastore-introspect")
+    ? {
+        introspect: true as const,
+        ...flagValue("--datastore-provider") && { provider: flagValue("--datastore-provider") as "relational" | "elasticsearch" },
+        ...flagValue("--datastore-env") && { env: flagValue("--datastore-env") },
+        ...flagValue("--datastore-targets") && { targets: flagValue("--datastore-targets") },
+        ...args.includes("--no-datastore-cache") && { noCache: true as const },
+      }
+    : undefined
 
   return {
     epicKey,
@@ -31,6 +50,7 @@ function parseArgs(argv: string[]) {
     ...args.includes("--no-cache") && { noCache: true as const },
     ...args.includes("--forensics") && { forensics: true as const },
     ...args.includes("--stdout") && { stdout: true as const },
+    ...datastore && { datastore },
     root: process.cwd(),
   }
 }

@@ -88,30 +88,38 @@ SAZED_TIMEOUT=300 bun run packages/orchestrator/src/analyze-with-context.ts EPIC
 
 ### Analysis with datastore introspection
 
-Sazed can introspect PostgreSQL and Elasticsearch schemas during analysis to discover constraints (NOT NULL, CHECK, UNIQUE, FK, ENUM) and field mappings. This runs from `modules/sazed/`.
+Sazed can introspect PostgreSQL and Elasticsearch schemas during analysis to discover constraints (NOT NULL, CHECK, UNIQUE, FK, ENUM) and field mappings.
 
 ```bash
-# PostgreSQL introspection (requires approval unless auto-approved)
-bun run packages/cli/src/main.ts analyze EPIC-123 \
+# PostgreSQL introspection via orchestrator
+bun run packages/orchestrator/src/analyze-with-context.ts EPIC-123 \
   --datastore-introspect \
   --datastore-provider relational \
   --datastore-env local \
   --datastore-targets users,orders
 
-# Elasticsearch introspection
-bun run packages/cli/src/main.ts analyze EPIC-123 \
+# Elasticsearch introspection via orchestrator
+bun run packages/orchestrator/src/analyze-with-context.ts EPIC-123 \
   --datastore-introspect \
   --datastore-provider elasticsearch \
   --datastore-env local \
   --datastore-targets products,inventory
 
 # Skip constraint cache (force fresh introspection)
-bun run packages/cli/src/main.ts analyze EPIC-123 \
+bun run packages/orchestrator/src/analyze-with-context.ts EPIC-123 \
   --datastore-introspect --no-datastore-cache
 
 # Auto-approve without interactive prompt
 SAZED_AUTO_APPROVE_DB_INTROSPECTION=true \
-  bun run packages/cli/src/main.ts analyze EPIC-123 --datastore-introspect
+  bun run packages/orchestrator/src/analyze-with-context.ts EPIC-123 \
+  --datastore-introspect --datastore-targets users,orders
+```
+
+The same flags work when running Sazed directly from `modules/sazed/`:
+
+```bash
+bun run packages/cli/src/main.ts analyze EPIC-123 \
+  --datastore-introspect --datastore-provider relational --datastore-env local
 ```
 
 Database connections are resolved via Jasnah's `execute_query.ts` using `QUERY_DB_<ENV>` environment variables (e.g. `QUERY_DB_LOCAL=postgres://user:pass@localhost:5432/mydb`). Results are cached with 24h TTL in `.refinement/db-constraints/` (relational) or `.refinement/es-mappings/` (elasticsearch).

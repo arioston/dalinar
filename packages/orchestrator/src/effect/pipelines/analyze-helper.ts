@@ -1,5 +1,5 @@
 import { Effect } from "effect"
-import { JasnahService, SazedService, type ExtractEntry } from "../services.js"
+import { JasnahService, SazedService, type ExtractEntry, type DatastoreOptions } from "../services.js"
 import type { SazedAnalyzeOutput } from "@dalinar/protocol"
 
 // ── Structured note extraction ────────────────────────────────────
@@ -63,6 +63,7 @@ export interface AnalyzeTaskOptions {
   readonly noMap?: boolean | undefined
   readonly noCache?: boolean | undefined
   readonly forensics?: boolean | undefined
+  readonly datastore?: DatastoreOptions | undefined
 }
 
 export interface AnalyzeTaskResult {
@@ -117,6 +118,7 @@ export const analyzeTask = (opts: AnalyzeTaskOptions) =>
         ...(opts.noMap ? { noMap: opts.noMap } : {}),
         ...(opts.noCache ? { noCache: opts.noCache } : {}),
         ...(opts.forensics ? { forensics: opts.forensics } : {}),
+        ...(opts.datastore ? { datastore: opts.datastore } : {}),
       })
       .pipe(
         Effect.tapError((e) =>

@@ -327,6 +327,14 @@ export const JasnahServiceLive = Layer.effect(JasnahService, makeJasnah)
 
 // ── Sazed Service ──────────────────────────────────────────────────
 
+export interface DatastoreOptions {
+  introspect?: boolean
+  provider?: "relational" | "elasticsearch" | undefined
+  env?: string | undefined
+  targets?: string | undefined
+  noCache?: boolean
+}
+
 export interface AnalyzeOptions {
   epicKey: string
   context?: string | undefined
@@ -336,6 +344,7 @@ export interface AnalyzeOptions {
   noCache?: boolean
   forensics?: boolean
   stdout?: boolean
+  datastore?: DatastoreOptions
 }
 
 export interface SyncOptions {
@@ -471,6 +480,13 @@ const makeSazed = Effect.gen(function* () {
     if (opts.noMap) args.push("--no-map")
     if (opts.noCache) args.push("--no-cache")
     if (opts.forensics) args.push("--forensics")
+    if (opts.datastore?.introspect) {
+      args.push("--datastore-introspect")
+      if (opts.datastore.provider) args.push("--datastore-provider", opts.datastore.provider)
+      if (opts.datastore.env) args.push("--datastore-env", opts.datastore.env)
+      if (opts.datastore.targets) args.push("--datastore-targets", opts.datastore.targets)
+      if (opts.datastore.noCache) args.push("--no-datastore-cache")
+    }
 
     const env = opts.context ? { DALINAR_CONTEXT: opts.context } : undefined
     return runAndDecode(args, SazedAnalyzeOutput, "Analysis", { epicKey: opts.epicKey, env })

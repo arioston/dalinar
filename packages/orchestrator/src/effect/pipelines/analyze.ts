@@ -44,6 +44,7 @@ export const analyzeWithContextPipeline = (
       ...(opts.noMap ? { noMap: opts.noMap } : {}),
       ...(opts.noCache ? { noCache: opts.noCache } : {}),
       ...(opts.forensics ? { forensics: opts.forensics } : {}),
+      ...(opts.datastore ? { datastore: opts.datastore } : {}),
     })
 
     yield* Effect.logInfo("Analysis complete").pipe(
