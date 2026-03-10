@@ -469,7 +469,9 @@ const makeSazed = Effect.gen(function* () {
 
   const analyze: SazedServiceShape["analyze"] = (opts) => {
     const args: string[] = ["analyze", opts.epicKey, "--json"]
-    if (opts.force) args.push("--force")
+    // Force re-analysis when prior context is provided — cached snapshots
+    // don't account for task status changes in the epic hierarchy
+    if (opts.force || opts.context) args.push("--force")
     if (opts.notes) args.push("--notes")
     if (opts.noMap) args.push("--no-map")
     if (opts.noCache) args.push("--no-cache")
