@@ -1,7 +1,7 @@
 import { FileSystem } from "@effect/platform"
-import { Clock, Effect, Schema } from "effect"
+import { Clock, Effect } from "effect"
 import { FileOperationError } from "../errors.js"
-import { Order, OrderLog, OrderLogJson } from "./schema.js"
+import { Order, OrderLog, loadOrderLog } from "./schema.js"
 
 export interface PromotionPaths {
   readonly walPath: string // orders-next.json
@@ -13,43 +13,12 @@ export interface PromotionResult {
   readonly total: number
 }
 
-// ── Step 1: Load WAL entries ────────────────────────────────────────
+// ── Step 1-2: Load entries via shared helper ────────────────────────
 
-const loadWalEntries = (walPath: string) =>
-  Effect.gen(function* () {
-    const fs = yield* FileSystem.FileSystem
-    return yield* fs.readFileString(walPath).pipe(
-      Effect.catchTag("SystemError", (e) =>
-        e.reason === "NotFound" ? Effect.succeed("") : Effect.fail(e),
-      ),
-      Effect.flatMap((raw) =>
-        raw ? Schema.decode(OrderLogJson)(raw) : Effect.succeed(new OrderLog({ orders: [] })),
-      ),
-      Effect.map((log) => [...log.orders]),
-      // Any failure (missing file, corrupt JSON, schema mismatch) → empty WAL
-      Effect.catchAll(() => Effect.succeed([] as Order[])),
-      Effect.withSpan("wal-promote/load-wal"),
-    )
-  })
-
-// ── Step 2: Load target (orders.json) entries ───────────────────────
-
-const loadTargetEntries = (targetPath: string) =>
-  Effect.gen(function* () {
-    const fs = yield* FileSystem.FileSystem
-    return yield* fs.readFileString(targetPath).pipe(
-      Effect.catchTag("SystemError", (e) =>
-        e.reason === "NotFound" ? Effect.succeed("") : Effect.fail(e),
-      ),
-      Effect.flatMap((raw) =>
-        raw ? Schema.decode(OrderLogJson)(raw) : Effect.succeed(new OrderLog({ orders: [] })),
-      ),
-      Effect.map((log) => [...log.orders]),
-      // Any failure → no existing orders
-      Effect.catchAll(() => Effect.succeed([] as Order[])),
-      Effect.withSpan("wal-promote/load-target"),
-    )
-  })
+const loadEntries = (filePath: string) =>
+  loadOrderLog(filePath).pipe(
+    Effect.map((log) => [...log.orders]),
+  )
 
 // ── Step 3: Merge entries with dedup ────────────────────────────────
 
@@ -63,28 +32,7 @@ const mergeEntries = (
   return { merged, newOrders }
 }
 
-// ── Step 4: Write target (orders.json) ──────────────────────────────
-
-const writeTarget = (targetPath: string, merged: readonly Order[], timestamp: string) =>
-  Effect.gen(function* () {
-    const fs = yield* FileSystem.FileSystem
-    const mergedLog = new OrderLog({
-      orders: [...merged],
-      lastPromotedAt: timestamp,
-    })
-    yield* fs.writeFileString(targetPath, JSON.stringify(mergedLog, null, 2)).pipe(
-      Effect.mapError(
-        (e) =>
-          new FileOperationError({
-            message: "Failed to write merged orders to target",
-            filePath: targetPath,
-            cause: e,
-          }),
-      ),
-    )
-  }).pipe(Effect.withSpan("wal-promote/write-target"))
-
-// ── Step 5: Truncate WAL ────────────────────────────────────────────
+// ── Step 4: Truncate WAL ────────────────────────────────────────────
 
 const truncateWal = (walPath: string, timestamp: string) =>
   Effect.gen(function* () {
@@ -105,76 +53,44 @@ const truncateWal = (walPath: string, timestamp: string) =>
     )
   }).pipe(Effect.withSpan("wal-promote/truncate-wal"))
 
-// ── Backup management ───────────────────────────────────────────────
+// ── Composed promotion pipeline ─────────────────────────────────────
 
-const backupTarget = (targetPath: string) => {
-  const backupPath = `${targetPath}.bak`
-  return Effect.gen(function* () {
+export const promote = (paths: PromotionPaths) =>
+  Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem
-    yield* fs.rename(targetPath, backupPath).pipe(
-      Effect.catchTag("SystemError", (e) =>
-        e.reason === "NotFound"
-          ? Effect.void // No existing orders.json, nothing to backup
-          : Effect.fail(e),
-      ),
+    const walOrders = yield* loadEntries(paths.walPath)
+    if (walOrders.length === 0) return { promoted: 0, total: 0 } satisfies PromotionResult
+
+    const existingOrders = yield* loadEntries(paths.targetPath)
+    const { merged, newOrders } = mergeEntries(existingOrders, walOrders)
+    const timestamp = yield* Clock.currentTimeMillis.pipe(Effect.map((ms) => new Date(ms).toISOString()))
+
+    // Write to temp, then atomic rename
+    const tmpPath = `${paths.targetPath}.tmp`
+    const mergedLog = new OrderLog({ orders: [...merged], lastPromotedAt: timestamp })
+    yield* fs.writeFileString(tmpPath, JSON.stringify(mergedLog, null, 2)).pipe(
       Effect.mapError(
         (e) =>
           new FileOperationError({
-            message: "Failed to backup orders.json",
-            filePath: targetPath,
+            message: "Failed to write merged orders to temp",
+            filePath: tmpPath,
             cause: e,
           }),
       ),
     )
-    return backupPath
-  })
-}
-
-const cleanupBackup = (backupPath: string) =>
-  Effect.gen(function* () {
-    const fs = yield* FileSystem.FileSystem
-    yield* fs.remove(backupPath).pipe(
-      Effect.catchTag("SystemError", (e) =>
-        e.reason === "NotFound" ? Effect.void : Effect.fail(e),
+    yield* fs.rename(tmpPath, paths.targetPath).pipe(
+      Effect.mapError(
+        (e) =>
+          new FileOperationError({
+            message: "Failed to atomic-rename temp to target",
+            filePath: paths.targetPath,
+            cause: e,
+          }),
       ),
-      Effect.catchAll(() => Effect.void),
     )
-  }).pipe(Effect.ignore)
 
-// ── Composed promotion pipeline ─────────────────────────────────────
+    // Truncate WAL (idempotent — dedup handles re-promotion)
+    yield* truncateWal(paths.walPath, timestamp)
 
-export const promote = (paths: PromotionPaths) =>
-  Effect.acquireRelease(
-    backupTarget(paths.targetPath),
-    (backupPath) => cleanupBackup(backupPath),
-  ).pipe(
-    Effect.andThen((backupPath) =>
-      Effect.gen(function* () {
-        // Step 1: Load WAL entries
-        const walOrders = yield* loadWalEntries(paths.walPath)
-
-        if (walOrders.length === 0) {
-          return { promoted: 0, total: 0 } satisfies PromotionResult
-        }
-
-        // Step 2: Load existing target entries (from backup)
-        const existingOrders = yield* loadTargetEntries(backupPath)
-
-        // Step 3: Merge with dedup (pure)
-        const { merged, newOrders } = mergeEntries(existingOrders, walOrders)
-
-        // Step 4: Get timestamp and write target
-        const timestamp = yield* Clock.currentTimeMillis.pipe(
-          Effect.map((ms) => new Date(ms).toISOString()),
-        )
-        yield* writeTarget(paths.targetPath, merged, timestamp)
-
-        // Step 5: Truncate WAL
-        yield* truncateWal(paths.walPath, timestamp)
-
-        return { promoted: newOrders.length, total: merged.length } satisfies PromotionResult
-      }),
-    ),
-    Effect.scoped,
-    Effect.withSpan("wal-promote"),
-  )
+    return { promoted: newOrders.length, total: merged.length } satisfies PromotionResult
+  }).pipe(Effect.withSpan("wal-promote"))

@@ -42,6 +42,9 @@ const JiraIssueResponse = Schema.Struct({
 })
 
 const JiraSearchResponse = Schema.Struct({
+  total: Schema.optional(Schema.Number),
+  maxResults: Schema.optional(Schema.Number),
+  startAt: Schema.optional(Schema.Number),
   issues: Schema.optional(
     Schema.Array(
       Schema.Struct({
@@ -259,6 +262,12 @@ const makeJiraService = Effect.gen(function* () {
             }),
         ),
       )
+
+      if (data.total !== undefined && data.issues && data.total > data.issues.length) {
+        yield* Effect.logWarning(
+          `Epic ${epicKey} has ${data.total} children but only ${data.issues.length} were fetched (maxResults=50). Results may be incomplete.`
+        )
+      }
 
       if (!data.issues || !Array.isArray(data.issues)) {
         return yield* new JiraError({

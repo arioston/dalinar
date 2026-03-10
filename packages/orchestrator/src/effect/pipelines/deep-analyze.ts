@@ -144,53 +144,38 @@ export const deepAnalyzePipeline = (opts: DeepAnalyzeOptions) =>
 
     yield* Effect.log(`Analyzing ${tasksToAnalyze.length} tasks sequentially...`)
 
-    interface ReduceState {
-      readonly context: string
-      readonly results: readonly TaskAnalysis[]
+    // Use evidence-grounded context only — no LLM output accumulation
+    // to ensure analysis is deterministic regardless of task order
+    const analyses: TaskAnalysis[] = []
+
+    for (const [index, task] of tasksToAnalyze.entries()) {
+      yield* Effect.log(`  [${index + 1}/${tasksToAnalyze.length}] Analyzing ${task.key}: ${task.summary}`)
+
+      const result = yield* analyzeTask({
+        epicKey,
+        taskKey: task.key,
+        extraContext: evidenceContext || undefined,
+        root,
+        ...(opts.force ? { force: opts.force } : {}),
+        ...(opts.notes ? { notes: opts.notes } : {}),
+      }).pipe(
+        Effect.timeout("5 minutes"),
+        Effect.catchAll((err) =>
+          Effect.succeed({
+            markdown: `Analysis failed: ${err}`,
+            memoriesUsed: 0,
+            notesExtracted: 0,
+          } satisfies AnalyzeTaskResult),
+        ),
+      )
+
+      const success = !result.markdown.startsWith("Analysis failed:")
+      analyses.push({
+        taskKey: task.key,
+        markdown: result.markdown,
+        success,
+      })
     }
-
-    const final = yield* Effect.reduce(
-      tasksToAnalyze,
-      { context: evidenceContext, results: [] } as ReduceState,
-      (state, task, index) =>
-        Effect.gen(function* () {
-          yield* Effect.log(`  [${index + 1}/${tasksToAnalyze.length}] Analyzing ${task.key}: ${task.summary}`)
-
-          const result = yield* analyzeTask({
-            epicKey,
-            taskKey: task.key,
-            extraContext: state.context || undefined,
-            root,
-            ...(opts.force ? { force: opts.force } : {}),
-            ...(opts.notes ? { notes: opts.notes } : {}),
-          }).pipe(
-            Effect.timeout("5 minutes"),
-            Effect.catchAll((err) =>
-              Effect.succeed({
-                markdown: `Analysis failed: ${err}`,
-                memoriesUsed: 0,
-                notesExtracted: 0,
-              } satisfies AnalyzeTaskResult),
-            ),
-          )
-
-          const success = !result.markdown.startsWith("Analysis failed:")
-          const analysis: TaskAnalysis = {
-            taskKey: task.key,
-            markdown: result.markdown,
-            success,
-          }
-
-          return {
-            context: success
-              ? state.context + `\n### ${task.key} analysis summary\n${result.markdown.slice(0, 500)}`
-              : state.context,
-            results: [...state.results, analysis],
-          }
-        }),
-    )
-
-    const analyses = final.results
     const successCount = analyses.filter((a) => a.success).length
     yield* Effect.log(`Completed: ${successCount}/${analyses.length} analyses succeeded`)
 

@@ -1,4 +1,5 @@
-import { Context, Duration, Effect, Layer, Schema } from "effect"
+import { Clock, Config, Context, Duration, Effect, Layer, Schema } from "effect"
+import { FileSystem } from "@effect/platform"
 import { JasnahError, SazedError, HoidError } from "./errors.js"
 import { SubprocessService } from "./subprocess.js"
 import {
@@ -367,13 +368,15 @@ export class SazedService extends Context.Tag("@dalinar/SazedService")<
   SazedServiceShape
 >() {}
 
-const SAZED_TIMEOUT_SECONDS = Math.max(
-  30,
-  Number(process.env.SAZED_TIMEOUT ?? 120),
-) || 120
+const SazedTimeout = Config.number("SAZED_TIMEOUT").pipe(
+  Config.withDefault(120),
+  Config.map((n) => Math.max(30, n)),
+)
 
 const makeSazed = Effect.gen(function* () {
   const subprocess = yield* SubprocessService
+  const fs = yield* FileSystem.FileSystem
+  const SAZED_TIMEOUT_SECONDS = yield* SazedTimeout
 
   const runSazed = (args: string[], env?: Record<string, string | undefined>) => {
     const cmd = resolveSazedCli()
@@ -484,21 +487,31 @@ const makeSazed = Effect.gen(function* () {
       if (opts.datastore.noCache) args.push("--no-datastore-cache")
     }
 
-    // Write context to temp file and pass via --prior-context flag
-    let contextPath: string | undefined
-    if (opts.context) {
-      const { writeFileSync } = require("fs") as typeof import("fs")
-      contextPath = `/tmp/dalinar-prior-context-${opts.epicKey}-${Date.now()}.md`
-      writeFileSync(contextPath, opts.context)
-      args.push("--prior-context", contextPath)
+    if (!opts.context) {
+      return runAndDecode(args, SazedAnalyzeOutput, "Analysis", { epicKey: opts.epicKey })
     }
 
-    return runAndDecode(args, SazedAnalyzeOutput, "Analysis", { epicKey: opts.epicKey }).pipe(
-      Effect.ensuring(
-        contextPath
-          ? Effect.sync(() => { try { require("fs").unlinkSync(contextPath) } catch {} })
-          : Effect.void,
-      ),
+    // Write context to temp file, run analysis, clean up
+    return Clock.currentTimeMillis.pipe(
+      Effect.flatMap((now) => {
+        const contextPath = `/tmp/dalinar-prior-context-${opts.epicKey}-${now}.md`
+        return Effect.scoped(
+          Effect.acquireUseRelease(
+            fs.writeFileString(contextPath, opts.context!).pipe(
+              Effect.as(contextPath),
+              Effect.mapError((e) => new SazedError({
+                message: `Failed to write prior context: ${e}`,
+                epicKey: opts.epicKey,
+              })),
+            ),
+            (path) => {
+              args.push("--prior-context", path)
+              return runAndDecode(args, SazedAnalyzeOutput, "Analysis", { epicKey: opts.epicKey })
+            },
+            (path) => fs.remove(path).pipe(Effect.ignore),
+          ),
+        )
+      }),
     )
   }
 

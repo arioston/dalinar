@@ -23,31 +23,37 @@ export const acquireLock = (
   const timeout = opts?.timeout ?? Duration.seconds(5)
   const retryInterval = opts?.retryInterval ?? Duration.millis(100)
   const pid = String(process.pid)
+  const pidPath = `${lockPath}/pid`
 
   const tryOnce: Effect.Effect<void, FileOperationError, FileSystem.FileSystem> = Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem
 
-    const exists = yield* fs.exists(lockPath).pipe(Effect.orDie)
+    // mkdir is atomic: if it succeeds, we exclusively own the lock
+    const acquired = yield* fs.makeDirectory(lockPath).pipe(
+      Effect.as(true),
+      Effect.catchAll(() => Effect.succeed(false)),
+    )
 
-    if (exists) {
-      const content = yield* fs.readFileString(lockPath).pipe(
+    if (acquired) {
+      yield* fs.writeFileString(pidPath, pid).pipe(
         Effect.mapError(
-          () => new FileOperationError({ message: "Failed to read lock file", filePath: lockPath }),
+          () => new FileOperationError({ message: "Failed to acquire lock", filePath: lockPath }),
         ),
       )
-      if (isStale(content)) {
-        yield* fs.remove(lockPath).pipe(Effect.ignore)
-      } else {
-        return yield* Effect.fail(
-          new FileOperationError({ message: "Lock held by active process", filePath: lockPath }),
-        )
-      }
+      return
     }
 
-    yield* fs.writeFileString(lockPath, pid).pipe(
-      Effect.mapError(
-        () => new FileOperationError({ message: "Failed to acquire lock", filePath: lockPath }),
-      ),
+    // Directory already exists — check if the holder is still alive
+    const content = yield* fs.readFileString(pidPath).pipe(
+      Effect.catchAll(() => Effect.succeed("")),
+    )
+
+    if (isStale(content)) {
+      yield* fs.remove(lockPath, { recursive: true }).pipe(Effect.ignore)
+    }
+
+    return yield* Effect.fail(
+      new FileOperationError({ message: "Lock held by active process", filePath: lockPath }),
     )
   })
 
@@ -69,5 +75,5 @@ export const releaseLock = (
 ): Effect.Effect<void, never, FileSystem.FileSystem> =>
   Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem
-    yield* fs.remove(lockPath).pipe(Effect.ignore)
+    yield* fs.remove(lockPath, { recursive: true }).pipe(Effect.ignore)
   })

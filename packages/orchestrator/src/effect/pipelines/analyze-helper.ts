@@ -1,4 +1,4 @@
-import { Effect, RateLimiter, Schema } from "effect"
+import { Config, Effect, RateLimiter, Schema } from "effect"
 import { FileSystem } from "@effect/platform"
 import { JasnahService, SazedService, type ExtractEntry, type DatastoreOptions } from "../services.js"
 import type { SazedAnalyzeOutput } from "@dalinar/protocol"
@@ -305,7 +305,10 @@ const saveJiraCache = (root: string, cache: Map<string, JiraCacheEntryType>) =>
 // Fetches Jira ticket details for the epic, task, and forensics keys.
 // Uses persistent cache + rate limiter. Gracefully degrades.
 
-const JIRA_RATE_LIMIT = Math.max(1, Number(process.env.JIRA_RATE_LIMIT ?? 5)) || 5
+const JiraRateLimitConfig = Config.number("JIRA_RATE_LIMIT").pipe(
+  Config.withDefault(5),
+  Config.map((n) => Math.max(1, n)),
+)
 
 const taskToCacheEntry = (task: JiraTask): JiraCacheEntryType => ({
   key: task.key,
@@ -343,6 +346,7 @@ const enrichWithJira = (
 ) =>
   Effect.gen(function* () {
     const jira = yield* JiraService
+    const JIRA_RATE_LIMIT = yield* JiraRateLimitConfig
 
     // Collect all keys: epic + task + forensics
     const allKeys = new Set<string>([epicKey])
@@ -434,11 +438,17 @@ export interface AnalyzeTaskResult {
   readonly notesExtracted: number
 }
 
+interface CoreAnalysisResult {
+  readonly sazedOutput: SazedAnalyzeOutput
+  readonly memoriesUsed: number
+}
+
 /**
- * Search Jasnah → format context → run Sazed → extract notes.
- * Does NOT do vault sync or key resolution — those are pipeline concerns.
+ * Pure analysis pipeline: search Jasnah → format context → run Sazed.
+ * No side effects beyond the Sazed subprocess. Returns the raw output
+ * so callers can decide what to do with it (enrich, extract notes, etc.).
  */
-export const analyzeTask = (opts: AnalyzeTaskOptions) =>
+const coreAnalysis = (opts: AnalyzeTaskOptions) =>
   Effect.gen(function* () {
     const jasnah = yield* JasnahService
     const sazed = yield* SazedService
@@ -520,37 +530,60 @@ export const analyzeTask = (opts: AnalyzeTaskOptions) =>
       )
     }
 
-    // Step 3.5: Fetch and cache Jira tickets (epic + task + forensics keys)
+    return { sazedOutput: result, memoriesUsed: capped.length } satisfies CoreAnalysisResult
+  }).pipe(
+    Effect.annotateLogs({ epicKey: opts.epicKey }),
+    Effect.withLogSpan("core-analysis"),
+    Effect.withSpan("core-analysis"),
+  )
+
+/**
+ * Post-processing: Jira enrichment → optional note extraction → comment appending.
+ * Side effects are isolated here so callers can use coreAnalysis alone for
+ * preview-only, parallel compare, or replay scenarios.
+ */
+const postProcessAnalysis = (
+  core: CoreAnalysisResult,
+  opts: AnalyzeTaskOptions,
+) =>
+  Effect.gen(function* () {
+    const jasnah = yield* JasnahService
+    const { sazedOutput: result } = core
+
+    // Jira enrichment
     const root = opts.root ?? process.cwd()
     const enrichedTickets = yield* enrichWithJira(result, root, opts.epicKey, opts.taskKey).pipe(
       Effect.withLogSpan("jira-enrichment"),
     )
 
-    // Step 4: Extract notes back to Jasnah (structured data, no regex parsing)
-    yield* Effect.logInfo("Extracting notes to Jasnah")
+    // Note extraction (only when --notes is set)
     const epicKey = opts.epicKey
     const taskKey = opts.taskKey
-    const newNotes = structuredNotesToEntries(result, { epicKey, taskKey, enrichedTickets })
-
-    const source = taskKey
-      ? `dalinar-analyze-${epicKey}-task-${taskKey}`
-      : `dalinar-analyze-${epicKey}`
-
     let notesExtracted = 0
-    if (newNotes.length > 0) {
-      const extraction = yield* jasnah
-        .extractMemories(newNotes, {
-          root: opts.root,
-          source,
-        })
-        .pipe(Effect.withLogSpan("note-extraction"))
-      if (extraction.success) {
-        notesExtracted = newNotes.length
-        yield* Effect.logInfo("Notes extracted").pipe(
-          Effect.annotateLogs({ count: String(notesExtracted) }),
-        )
-      } else {
-        yield* Effect.logWarning(`Extraction failed: ${extraction.output}`)
+
+    if (opts.notes) {
+      yield* Effect.logInfo("Extracting notes to Jasnah")
+      const newNotes = structuredNotesToEntries(result, { epicKey, taskKey, enrichedTickets })
+
+      const source = taskKey
+        ? `dalinar-analyze-${epicKey}-task-${taskKey}`
+        : `dalinar-analyze-${epicKey}`
+
+      if (newNotes.length > 0) {
+        const extraction = yield* jasnah
+          .extractMemories(newNotes, {
+            root: opts.root,
+            source,
+          })
+          .pipe(Effect.withLogSpan("note-extraction"))
+        if (extraction.success) {
+          notesExtracted = newNotes.length
+          yield* Effect.logInfo("Notes extracted").pipe(
+            Effect.annotateLogs({ count: String(notesExtracted) }),
+          )
+        } else {
+          yield* Effect.logWarning(`Extraction failed: ${extraction.output}`)
+        }
       }
     }
 
@@ -573,11 +606,21 @@ export const analyzeTask = (opts: AnalyzeTaskOptions) =>
 
     return {
       markdown,
-      memoriesUsed: capped.length,
+      memoriesUsed: core.memoriesUsed,
       notesExtracted,
     } satisfies AnalyzeTaskResult
   }).pipe(
     Effect.annotateLogs({ epicKey: opts.epicKey }),
-    Effect.withLogSpan("analyze-task"),
+    Effect.withLogSpan("post-process"),
+  )
+
+/**
+ * Composed analysis: coreAnalysis → postProcessAnalysis.
+ * Backward-compatible entry point. For preview-only use cases,
+ * call coreAnalysis directly.
+ */
+export const analyzeTask = (opts: AnalyzeTaskOptions) =>
+  coreAnalysis(opts).pipe(
+    Effect.flatMap((core) => postProcessAnalysis(core, opts)),
     Effect.withSpan("analyze-task"),
   )

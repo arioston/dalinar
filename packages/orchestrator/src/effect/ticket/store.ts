@@ -1,4 +1,4 @@
-import { Context, Effect, Layer } from "effect"
+import { Clock, Context, Effect, Layer } from "effect"
 import { FileSystem } from "@effect/platform"
 import { resolve } from "path"
 import { FileOperationError, TicketStateError } from "../errors.js"
@@ -8,6 +8,8 @@ import { encodeTicketState, decodeTicketState } from "./persistence.js"
 import { transition } from "./transitions.js"
 import type { TicketAction } from "./actions.js"
 import { acquireLock, releaseLock } from "./lock.js"
+import { Order } from "../wal/schema.js"
+import { appendOrder } from "../wal/append.js"
 
 export interface TicketStoreShape {
   readonly load: (
@@ -104,6 +106,8 @@ export const makeTicketStore = (root: string) =>
           ),
         )
 
+    const walPath = resolve(root, ".orders", "orders-next.json")
+
     const apply: TicketStoreShape["apply"] = (ticketKey, action) => {
       const lockPath = resolve(ticketDir(root), `${ticketKey.toLowerCase()}.lock`)
 
@@ -118,6 +122,22 @@ export const makeTicketStore = (root: string) =>
               const result = yield* transition(state, action)
 
               yield* save(result)
+
+              // Emit WAL record under the same lock for atomic audit trail
+              const now = yield* Clock.currentTimeMillis
+              const order = new Order({
+                id: `${ticketKey}-${action._tag}-${now}`,
+                ticketKey,
+                action: action._tag,
+                timestamp: new Date(now).toISOString(),
+              })
+              yield* appendOrder(walPath, order).pipe(
+                Effect.provideService(FileSystem.FileSystem, fs),
+                Effect.catchAll((e) =>
+                  Effect.logWarning(`WAL append failed for ${ticketKey}: ${e.message}`),
+                ),
+              )
+
               return result
             }),
           () => releaseLock(lockPath).pipe(Effect.provideService(FileSystem.FileSystem, fs)),

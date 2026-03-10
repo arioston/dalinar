@@ -32,6 +32,8 @@ const makeSnapshotService = Effect.gen(function* () {
     const hash = contentHash({
       backlog: input.backlog,
       capacity: input.capacity,
+      recentHistory: input.recentHistory,
+      metadata: input.metadata,
     })
     return new MiseSnapshotClass({
       timestamp,

@@ -1,8 +1,8 @@
 import { FileSystem } from "@effect/platform"
-import { Effect, Schema } from "effect"
+import { Effect } from "effect"
 import { dirname } from "path"
 import { FileOperationError } from "../errors.js"
-import { Order, OrderLog, OrderLogJson } from "./schema.js"
+import { Order, OrderLog, loadOrderLog } from "./schema.js"
 
 export const appendOrder = (walPath: string, order: Order) =>
   Effect.gen(function* () {
@@ -20,17 +20,7 @@ export const appendOrder = (walPath: string, order: Order) =>
       ),
     )
 
-    // Load existing WAL
-    const existing = yield* fs.readFileString(walPath).pipe(
-      Effect.catchTag("SystemError", (e) =>
-        e.reason === "NotFound" ? Effect.succeed("") : Effect.fail(e),
-      ),
-      Effect.flatMap((raw) =>
-        raw ? Schema.decode(OrderLogJson)(raw) : Effect.succeed(new OrderLog({ orders: [] })),
-      ),
-      // Any failure (corrupt JSON, schema mismatch) → empty WAL
-      Effect.catchAll(() => Effect.succeed(new OrderLog({ orders: [] }))),
-    )
+    const existing = yield* loadOrderLog(walPath)
 
     // Dedup by order.id
     if (existing.orders.some((o) => o.id === order.id)) {

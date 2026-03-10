@@ -17,13 +17,10 @@ export function resolveDalinarRoot(): string {
 // ── Path resolvers (extracted for preflight + service reuse) ───────
 
 export function resolveJasnahRoot(): string {
-  return (
-    process.env.JASNAH_ROOT ??
-    resolve(
-      process.env.XDG_DATA_HOME ?? resolve(process.env.HOME!, ".local/share"),
-      "jasnah",
-    )
-  )
+  // Explicit override takes precedence
+  if (process.env.JASNAH_ROOT) return process.env.JASNAH_ROOT
+  // Default: resolve from monorepo submodule (not external install)
+  return resolve(resolveDalinarRoot(), "modules/jasnah")
 }
 
 export function resolveJasnahScript(name: string): string {

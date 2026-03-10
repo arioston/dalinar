@@ -7,6 +7,7 @@
 
 import { parseSemver, type SemverParts } from "./version.js"
 import { SUPPORTED_PROVIDERS, SUPPORTED_MODELS, type SupportedProvider } from "./model-config.js"
+import { SAZED_CONTRACT_VERSION } from "./sazed-contract.js"
 
 export interface CompatibilityEntry {
   readonly orchestratorVersion: string
@@ -19,7 +20,7 @@ export interface CompatibilityEntry {
 export const COMPATIBILITY_MATRIX: readonly CompatibilityEntry[] = [
   {
     orchestratorVersion: "0.1.0",
-    sazedContractVersion: "1.0.0",
+    sazedContractVersion: SAZED_CONTRACT_VERSION,
     sazedCliMinVersion: "0.1.0",
     supportedProviders: [...SUPPORTED_PROVIDERS],
     supportedModels: { ...SUPPORTED_MODELS },

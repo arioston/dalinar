@@ -14,6 +14,7 @@ import { NodeFileSystem } from "@effect/platform-node"
 import { SubprocessServiceLive } from "./subprocess.js"
 import { doctor } from "./doctor.js"
 import { preflight, type PreflightCheck } from "./paths.js"
+import { FileOperationError } from "./errors.js"
 
 const strict = process.argv.includes("--strict")
 
@@ -62,12 +63,15 @@ const program = Effect.gen(function* () {
     )
   }
 
-  const healthy = report.sazedCliAvailable && report.sazedCliBootable && report.remediations.length === 0
+  const preflightHealthy = pre.checks.length > 0 && pre.checks.every((c) => c.ok)
+  const healthy = report.sazedCliAvailable && report.sazedCliBootable && report.remediations.length === 0 && preflightHealthy
   yield* Console.log(`\n  Status: ${healthy ? "HEALTHY" : "DEGRADED"}`)
   yield* Console.log("──────────────────────────────────────────────────\n")
 
   if (strict && !healthy) {
-    process.exitCode = 1
+    return yield* Effect.fail(
+      new FileOperationError({ message: "Doctor strict check failed: system DEGRADED", filePath: "doctor" }),
+    )
   }
 
   return report
@@ -81,10 +85,9 @@ const runnable = program.pipe(
     ),
   ),
   Effect.catchAllDefect((defect) =>
-    Effect.sync(() => {
-      console.error("[doctor] Unexpected defect:", defect)
-      process.exitCode = 1
-    }),
+    Effect.logError(`[doctor] Unexpected defect: ${defect}`).pipe(
+      Effect.tap(() => Effect.sync(() => { process.exitCode = 1 })),
+    ),
   ),
 )
 

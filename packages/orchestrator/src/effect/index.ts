@@ -151,6 +151,5 @@ export {
 
 export { Order, OrderLog, OrderLogJson } from "./wal/schema.js"
 export { appendOrder } from "./wal/append.js"
-export { readOrders } from "./wal/read.js"
 export { promote, type PromotionPaths } from "./wal/promotion.js"
 export { WALService, WALServiceLive } from "./wal/service.js"
