@@ -6,14 +6,45 @@ import { FileOperationError } from "../errors.js"
 import { vaultSyncPipeline } from "./vault-sync.js"
 import { analyzeTask } from "./analyze-helper.js"
 import { JiraService } from "../services/jira.js"
+import type { JiraTask } from "../jira-schemas.js"
 import {
   getCompletedTaskEvidence,
   formatEvidenceAsContext,
 } from "./retro.js"
 
-// ── Effect pipeline ────────────────────────────────────────────────
+// ── Helpers ───────────────────────────────────────────────────────
 
 const DONE_STATUSES = new Set(["done", "closed", "resolved"])
+
+function formatTaskHierarchy(
+  tasks: readonly JiraTask[],
+  evidenceContext: string,
+): string {
+  if (tasks.length === 0) return ""
+
+  const lines = ["## Current Epic State (from Jira)", ""]
+  for (const t of tasks) {
+    const assignee = t.assignee ? ` (assigned: ${t.assignee})` : ""
+    const points = t.storyPoints ? ` [${t.storyPoints}pts]` : ""
+    lines.push(`- **${t.key}**: ${t.summary} — ${t.status}${assignee}${points}`)
+  }
+
+  const completed = tasks.filter(t => DONE_STATUSES.has(t.status.toLowerCase()))
+  const pending = tasks.filter(t => !DONE_STATUSES.has(t.status.toLowerCase()))
+  lines.push("")
+  lines.push(`> ${completed.length} completed, ${pending.length} pending`)
+  lines.push("")
+  lines.push("**Instruction**: Do NOT invent new tasks. Refine plans for the pending tasks listed above. Use completed task evidence to inform what has already been built.")
+
+  if (evidenceContext) {
+    lines.push("")
+    lines.push(evidenceContext)
+  }
+
+  return lines.join("\n")
+}
+
+// ── Effect pipeline ────────────────────────────────────────────────
 
 export const analyzeWithContextPipeline = (
   opts: AnalyzeOptions & { root?: string },
@@ -38,25 +69,39 @@ export const analyzeWithContextPipeline = (
 
     yield* Effect.logInfo("Starting analysis with context")
 
-    // Stage 0.5: If we have a task key, gather git evidence from completed siblings
+    // Stage 0.5: Fetch task hierarchy — always task-aware when epic has children
     let extraContext: string | undefined
-    if (taskKey) {
-      const siblingTasks = yield* jira.fetchTasksForEpic(epicKey).pipe(
-        Effect.catchAll(() => Effect.succeed([] as import("../jira-schemas.js").JiraTask[])),
+    const epicTasks = yield* jira.fetchTasksForEpic(epicKey).pipe(
+      Effect.tapError((e) => Effect.logWarning(`fetchTasksForEpic failed: ${e.message}`)),
+      Effect.catchAll(() => Effect.succeed([] as JiraTask[])),
+    )
+
+    if (epicTasks.length > 0) {
+      const completed = epicTasks.filter(t => DONE_STATUSES.has(t.status.toLowerCase()))
+      const pending = epicTasks.filter(t => !DONE_STATUSES.has(t.status.toLowerCase()))
+
+      yield* Effect.logInfo("Epic task hierarchy loaded").pipe(
+        Effect.annotateLogs({
+          total: String(epicTasks.length),
+          completed: String(completed.length),
+          pending: String(pending.length),
+        }),
       )
-      const completed = siblingTasks.filter((t) =>
-        DONE_STATUSES.has(t.status.toLowerCase()) && t.key !== taskKey,
-      )
+
+      // Gather git evidence for completed tasks
+      let evidenceContext = ""
       if (completed.length > 0) {
-        yield* Effect.logInfo(`Gathering git evidence from ${completed.length} completed siblings`)
+        yield* Effect.logInfo(`Gathering git evidence from ${completed.length} completed tasks`)
         const root = opts.root ?? process.cwd()
         const evidence = yield* Effect.forEach(
           completed,
           (task) => getCompletedTaskEvidence(task, root),
           { concurrency: "unbounded" },
         )
-        extraContext = formatEvidenceAsContext(evidence) || undefined
+        evidenceContext = formatEvidenceAsContext(evidence)
       }
+
+      extraContext = formatTaskHierarchy(epicTasks, evidenceContext)
     }
 
     // Stages 1-3: Search context → Sazed analysis → Extract notes (via shared helper)

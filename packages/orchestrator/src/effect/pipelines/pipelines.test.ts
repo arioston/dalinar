@@ -345,6 +345,54 @@ describe("analyzeWithContextPipeline", () => {
     expect(result.markdown).toContain("Alice")
   })
 
+  test("passes task hierarchy as context to Sazed when epic has children", async () => {
+    const doneTask = new JiraTask({ key: "TRK-101", summary: "Auth module", status: "Done", issueType: "Story", assignee: "Alice" })
+    const progressTask = new JiraTask({ key: "TRK-102", summary: "Scheduler v2", status: "In Progress", issueType: "Task", assignee: "Bob", storyPoints: 5 })
+    const todoTask = new JiraTask({ key: "TRK-103", summary: "E2E tests", status: "To Do", issueType: "Task" })
+
+    let capturedContext: string | undefined
+    const TrackingSazed = Layer.succeed(SazedService, {
+      analyze: (opts) => {
+        capturedContext = opts.context
+        return Effect.succeed(testAnalyzeOutput)
+      },
+      syncToJira: () => Effect.succeed(new SazedSyncOutput({ created: [], updated: [], skipped: [] })),
+      checkStatus: () => Effect.succeed(new SazedStatusOutput({ epicKey: "EPIC-1", basedOnCommit: "abc1234", tasks: [] })),
+      listNotes: () => Effect.succeed(new SazedNotesListOutput({ notes: [] })),
+      searchNotes: () => Effect.succeed(new SazedNotesListOutput({ notes: [] })),
+    } satisfies SazedServiceShape)
+
+    const JiraWithHierarchy = Layer.succeed(JiraService, {
+      resolveKey: () => Effect.succeed(null),
+      fetchTask: (key) => Effect.succeed(new JiraTask({ key, summary: "", status: "Unknown", issueType: "Unknown" })),
+      fetchTasksForEpic: () => Effect.succeed([doneTask, progressTask, todoTask]),
+    } satisfies JiraServiceShape)
+
+    const layer = Layer.mergeAll(TestJasnah, TrackingSazed, TestSubprocess, JiraWithHierarchy, NodeFileSystem.layer)
+
+    await Effect.runPromise(
+      analyzeWithContextPipeline({
+        epicKey: "EPIC-1",
+        root: `/tmp/test-hierarchy-${Date.now()}`,
+        stdout: true,
+      }).pipe(Effect.provide(layer)),
+    )
+
+    // Sazed must receive the task hierarchy
+    expect(capturedContext).toBeDefined()
+    expect(capturedContext).toContain("Current Epic State")
+    expect(capturedContext).toContain("TRK-101")
+    expect(capturedContext).toContain("Auth module")
+    expect(capturedContext).toContain("Done")
+    expect(capturedContext).toContain("TRK-102")
+    expect(capturedContext).toContain("In Progress")
+    expect(capturedContext).toContain("5pts")
+    expect(capturedContext).toContain("TRK-103")
+    expect(capturedContext).toContain("To Do")
+    expect(capturedContext).toContain("1 completed, 2 pending")
+    expect(capturedContext).toContain("Do NOT invent new tasks")
+  })
+
   test("failed analysis returns SazedError", async () => {
     const result = await Effect.runPromiseExit(
       analyzeWithContextPipeline({

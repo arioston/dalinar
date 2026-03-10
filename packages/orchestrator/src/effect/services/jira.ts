@@ -222,7 +222,7 @@ const makeJiraService = Effect.gen(function* () {
         .run(resolveJiraScript(), {
           args: [
             "GET",
-            `/rest/api/2/search?jql=${jql}&fields=summary,status,issuetype,assignee,customfield_10016,labels,parent,customfield_10014&maxResults=50`,
+            `/rest/api/3/search/jql?jql=${jql}&fields=summary,status,issuetype,assignee,customfield_10016,labels,parent,customfield_10014&maxResults=50`,
           ],
           nothrow: true,
           timeout: "30 seconds",
