@@ -22,19 +22,36 @@ function formatTaskHierarchy(
 ): string {
   if (tasks.length === 0) return ""
 
-  const lines = ["## Current Epic State (from Jira)", ""]
-  for (const t of tasks) {
-    const assignee = t.assignee ? ` (assigned: ${t.assignee})` : ""
-    const points = t.storyPoints ? ` [${t.storyPoints}pts]` : ""
-    lines.push(`- **${t.key}**: ${t.summary} — ${t.status}${assignee}${points}`)
-  }
-
   const completed = tasks.filter(t => DONE_STATUSES.has(t.status.toLowerCase()))
   const pending = tasks.filter(t => !DONE_STATUSES.has(t.status.toLowerCase()))
-  lines.push("")
-  lines.push(`> ${completed.length} completed, ${pending.length} pending`)
-  lines.push("")
-  lines.push("**Instruction**: Do NOT invent new tasks. Refine plans for the pending tasks listed above. Use completed task evidence to inform what has already been built.")
+
+  const lines = ["## Epic Task Structure (from Jira)", ""]
+
+  // Completed tasks as evidence
+  if (completed.length > 0) {
+    lines.push("### Completed Tasks")
+    for (const t of completed) {
+      const assignee = t.assignee ? ` (assigned: ${t.assignee})` : ""
+      lines.push(`- ~~${t.key}: ${t.summary}~~ — ${t.status}${assignee}`)
+    }
+    lines.push("")
+  }
+
+  // Pending tasks as the required plan skeleton
+  if (pending.length > 0) {
+    lines.push("### Pending Tasks — YOU MUST PLAN EXACTLY THESE")
+    lines.push("")
+    for (const t of pending) {
+      const assignee = t.assignee ? ` (assigned: ${t.assignee})` : ""
+      const points = t.storyPoints ? ` [${t.storyPoints}pts]` : ""
+      lines.push(`- **${t.key}**: ${t.summary}${assignee}${points}`)
+    }
+    lines.push("")
+    lines.push(`**BINDING CONSTRAINT**: Your plan MUST produce exactly ${pending.length} tasks.`)
+    lines.push(`Each task MUST use the Jira key as its ID (${pending.map(t => t.key).join(", ")}).`)
+    lines.push(`Each task title MUST start with its Jira key (e.g., "${pending[0].key} — ${pending[0].summary}").`)
+    lines.push("Do NOT invent new tasks. Do NOT merge or split these tasks. Do NOT renumber them.")
+  }
 
   if (evidenceContext) {
     lines.push("")

@@ -378,18 +378,21 @@ describe("analyzeWithContextPipeline", () => {
       }).pipe(Effect.provide(layer)),
     )
 
-    // Sazed must receive the task hierarchy
+    // Sazed must receive the task hierarchy with binding constraints
     expect(capturedContext).toBeDefined()
-    expect(capturedContext).toContain("Current Epic State")
-    expect(capturedContext).toContain("TRK-101")
-    expect(capturedContext).toContain("Auth module")
-    expect(capturedContext).toContain("Done")
+    expect(capturedContext).toContain("Epic Task Structure")
+    // Completed task shown as struck-through
+    expect(capturedContext).toContain("~~TRK-101: Auth module~~")
+    // Pending tasks listed as required plan skeleton
+    expect(capturedContext).toContain("Pending Tasks")
     expect(capturedContext).toContain("TRK-102")
-    expect(capturedContext).toContain("In Progress")
+    expect(capturedContext).toContain("Scheduler v2")
     expect(capturedContext).toContain("5pts")
     expect(capturedContext).toContain("TRK-103")
-    expect(capturedContext).toContain("To Do")
-    expect(capturedContext).toContain("1 completed, 2 pending")
+    expect(capturedContext).toContain("E2E tests")
+    // Binding constraints with exact task count and keys
+    expect(capturedContext).toContain("MUST produce exactly 2 tasks")
+    expect(capturedContext).toContain("TRK-102, TRK-103")
     expect(capturedContext).toContain("Do NOT invent new tasks")
   })
 
@@ -426,7 +429,7 @@ describe("analyzeWithContextPipeline", () => {
 
     // When task hierarchy exists, context must be provided to Sazed
     expect(capturedOpts?.context).toBeDefined()
-    expect(capturedOpts?.context).toContain("Current Epic State")
+    expect(capturedOpts?.context).toContain("Epic Task Structure")
   })
 
   test("resolves task key to parent epic and includes both in context", async () => {
@@ -477,7 +480,7 @@ describe("analyzeWithContextPipeline", () => {
     expect(capturedContext).toContain("My task")
     expect(capturedContext).toContain("TRK-101")
     expect(capturedContext).toContain("Done task")
-    expect(capturedContext).toContain("1 completed, 1 pending")
+    expect(capturedContext).toContain("MUST produce exactly 1 tasks")
   })
 
   test("skips task hierarchy when epic has no children", async () => {
@@ -512,7 +515,7 @@ describe("analyzeWithContextPipeline", () => {
     // No task hierarchy → context should not contain epic state block
     // (may still contain Jasnah memories, but not task hierarchy)
     if (capturedContext) {
-      expect(capturedContext).not.toContain("Current Epic State")
+      expect(capturedContext).not.toContain("Epic Task Structure")
     }
   })
 
@@ -552,7 +555,7 @@ describe("analyzeWithContextPipeline", () => {
     expect(result.markdown).toContain("Test Analysis")
     // No task hierarchy in context since Jira failed
     if (capturedContext) {
-      expect(capturedContext).not.toContain("Current Epic State")
+      expect(capturedContext).not.toContain("Epic Task Structure")
     }
   })
 
@@ -609,7 +612,7 @@ describe("analyzeWithContextPipeline", () => {
     // Should contain completed task evidence
     expect(capturedContext).toContain("TRK-200")
     expect(capturedContext).toContain("Auth module")
-    expect(capturedContext).toContain("1 completed, 1 pending")
+    expect(capturedContext).toContain("MUST produce exactly 1 tasks")
     // Should contain git evidence section
     expect(capturedContext).toContain("implement auth module")
   })
