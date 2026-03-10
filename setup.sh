@@ -32,6 +32,7 @@ GLOBAL_SKILLS_LIST=(
 CLAUDE_SKILLS_DIR="${CLAUDE_GLOBAL}/skills"
 OPENCODE_SKILLS_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/opencode/skills"
 CODEX_SKILLS_DIR="${HOME}/.agents/skills"
+JUNIE_SKILLS_DIR="${HOME}/.junie/commands"
 
 ok()   { echo "  [ok] $1"; }
 skip() { echo "  [skip] $1 (already exists)"; }
@@ -177,21 +178,22 @@ for skill in "${HOID_ALL_SKILLS[@]}"; do
   fi
 done
 
-# ── 7. Global skills (Claude Code + OpenCode + Codex) ──────────
+# ── 7. Global skills (Claude Code + OpenCode + Codex + Junie) ──
 
-info "Linking global skills (Claude Code, OpenCode, Codex)"
+info "Linking global skills (Claude Code, OpenCode, Codex, Junie)"
 
-mkdir -p "$CLAUDE_SKILLS_DIR" "$OPENCODE_SKILLS_DIR" "$CODEX_SKILLS_DIR"
+mkdir -p "$CLAUDE_SKILLS_DIR" "$OPENCODE_SKILLS_DIR" "$CODEX_SKILLS_DIR" "$JUNIE_SKILLS_DIR"
 
 for skill in "${GLOBAL_SKILLS_LIST[@]}"; do
   if [ -d "${SKILLS_DIR}/${skill}" ]; then
     symlink_or_replace "${SKILLS_DIR}/${skill}" "${CLAUDE_SKILLS_DIR}/${skill}"
     symlink_or_replace "${SKILLS_DIR}/${skill}" "${OPENCODE_SKILLS_DIR}/${skill}"
     symlink_or_replace "${SKILLS_DIR}/${skill}" "${CODEX_SKILLS_DIR}/${skill}"
+    symlink_or_replace "${SKILLS_DIR}/${skill}" "${JUNIE_SKILLS_DIR}/${skill}"
   fi
 done
 
-ok "Skills available globally for Claude Code, OpenCode, and Codex"
+ok "Skills available globally for Claude Code, OpenCode, Codex, and Junie"
 
 # ── 8. Hoid calendar config ───────────────────────────────────
 
