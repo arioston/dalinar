@@ -218,24 +218,49 @@ const makeJiraService = Effect.gen(function* () {
 
   const fetchTasksForEpic: JiraServiceShape["fetchTasksForEpic"] = (epicKey) =>
     Effect.gen(function* () {
-      const jql = encodeURIComponent(
-        `"Epic Link" = ${epicKey} OR parent = ${epicKey}`,
-      )
-      const result = yield* subprocess
-        .run(resolveJiraScript(), {
-          args: [
-            "GET",
-            `/rest/api/3/search/jql?jql=${jql}&fields=summary,status,issuetype,assignee,customfield_10016,labels,parent,customfield_10014&maxResults=50`,
-          ],
-          nothrow: true,
-          timeout: "30 seconds",
-          retryPolicy: jiraRetry,
-        })
-        .pipe(
+      const jql = encodeURIComponent(`"Epic Link" = ${epicKey} OR parent = ${epicKey}`)
+
+      const allIssues: any[] = []
+      let startAt = 0
+      const maxResults = 100
+      let total = 0
+
+      do {
+        const result = yield* subprocess
+          .run(resolveJiraScript(), {
+            args: [
+              "GET",
+              `/rest/api/3/search/jql?jql=${jql}&fields=summary,status,issuetype,assignee,customfield_10016,labels,parent,customfield_10014&maxResults=${maxResults}&startAt=${startAt}`,
+            ],
+            nothrow: true,
+            timeout: "30 seconds",
+            retryPolicy: jiraRetry,
+          })
+          .pipe(
+            Effect.mapError(
+              (e) =>
+                new JiraError({
+                  message: `fetchTasksForEpic failed at startAt=${startAt}: ${e.message}`,
+                  operation: "fetchTasksForEpic",
+                  key: epicKey,
+                  cause: e,
+                }),
+            ),
+          )
+
+        if (result.exitCode !== 0) {
+          return yield* new JiraError({
+            message: `fetchTasksForEpic returned exit code ${result.exitCode} at startAt=${startAt}: ${result.stderr}`,
+            operation: "fetchTasksForEpic",
+            key: epicKey,
+          })
+        }
+
+        const data = yield* decodeJiraResponse(JiraSearchResponse)(result.stdout).pipe(
           Effect.mapError(
             (e) =>
               new JiraError({
-                message: `fetchTasksForEpic failed: ${e.message}`,
+                message: `fetchTasksForEpic decode failed at startAt=${startAt}: ${e.message}`,
                 operation: "fetchTasksForEpic",
                 key: epicKey,
                 cause: e,
@@ -243,41 +268,20 @@ const makeJiraService = Effect.gen(function* () {
           ),
         )
 
-      if (result.exitCode !== 0) {
-        return yield* new JiraError({
-          message: `fetchTasksForEpic returned exit code ${result.exitCode}: ${result.stderr}`,
-          operation: "fetchTasksForEpic",
-          key: epicKey,
-        })
-      }
+        if (data.issues) {
+          allIssues.push(...data.issues)
+        }
 
-      const data = yield* decodeJiraResponse(JiraSearchResponse)(result.stdout).pipe(
-        Effect.mapError(
-          (e) =>
-            new JiraError({
-              message: `fetchTasksForEpic decode failed: ${e.message}`,
-              operation: "fetchTasksForEpic",
-              key: epicKey,
-              cause: e,
-            }),
-        ),
-      )
+        total = data.total ?? allIssues.length
+        const fetchedCount = data.issues?.length ?? 0
+        startAt += fetchedCount
 
-      if (data.total !== undefined && data.issues && data.total > data.issues.length) {
-        yield* Effect.logWarning(
-          `Epic ${epicKey} has ${data.total} children but only ${data.issues.length} were fetched (maxResults=50). Results may be incomplete.`
-        )
-      }
+        if (fetchedCount === 0 || allIssues.length >= total) {
+          break
+        }
+      } while (true)
 
-      if (!data.issues || !Array.isArray(data.issues)) {
-        return yield* new JiraError({
-          message: "fetchTasksForEpic returned no issues array",
-          operation: "fetchTasksForEpic",
-          key: epicKey,
-        })
-      }
-
-      return data.issues.map((issue) => fieldsToJiraTask(issue.key, issue.fields))
+      return allIssues.map((issue) => fieldsToJiraTask(issue.key, issue.fields))
     }).pipe(Effect.withSpan("jira-fetch-tasks-for-epic"))
 
   return {

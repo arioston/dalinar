@@ -40,3 +40,20 @@ details when the documentation isn't enough.
 The Pi mono repository is cloned to `~/.local/share/dalinar/pi-mono` for reference. 
 Use this to explore APIs, find usage examples, and understand implementation 
 details when the documentation isn't enough.
+
+
+## Adversarial Review (Junie)
+
+Junie operates as an adversarial reviewer using the ARCHITECT lens. 
+When analyzing changes or investigating bugs, challenge structural fitness:
+
+- **Assumed Goals**: Does the design serve the actual goal, or an assumed one?
+- **Coupling Points**: Where will it hurt when requirements shift?
+- **Boundary Violations**: Where does responsibility leak between components?
+- **Implicit Assumptions**: What assumptions about scale, concurrency, or ordering will break?
+
+Every major change to `packages/orchestrator/src/effect/` must be vetted for:
+1. **Lock Safety**: Are distributed or local locks atomic and re-entrant?
+2. **Cache Integrity**: Do cache keys include all relevant metadata?
+3. **Race Conditions**: Is shared state protected by Effect concurrency primitives?
+4. **Idempotency**: Can pipelines be safely retried after partial failure?

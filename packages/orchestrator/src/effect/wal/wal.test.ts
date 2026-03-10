@@ -59,7 +59,7 @@ describe("appendOrder", () => {
     expect(log.orders).toHaveLength(1)
   })
 
-  test("recovers from corrupt JSON in existing WAL", async () => {
+  test("fails loudly on corrupt JSON in existing WAL", async () => {
     const walPath = resolve(tempDir, ".orders", "orders-next.json")
     await mkdir(resolve(tempDir, ".orders"), { recursive: true })
 
@@ -73,16 +73,14 @@ describe("appendOrder", () => {
       timestamp: "2026-01-01",
     })
 
-    // Should treat corrupt file as empty WAL and write fresh
-    await runWithFs(appendOrder(walPath, order))
-
-    const raw = await readFile(walPath, "utf-8")
-    const log = JSON.parse(raw)
-    expect(log.orders).toHaveLength(1)
-    expect(log.orders[0].id).toBe("o1")
+    // Corrupt WAL must fail — never silently drop history
+    const exit = await Effect.runPromiseExit(
+      Effect.provide(appendOrder(walPath, order), NodeFileSystem.layer),
+    )
+    expect(exit._tag).toBe("Failure")
   })
 
-  test("handles WAL with missing orders field", async () => {
+  test("fails loudly on WAL with missing orders field", async () => {
     const walPath = resolve(tempDir, ".orders", "orders-next.json")
     await mkdir(resolve(tempDir, ".orders"), { recursive: true })
 
@@ -96,11 +94,10 @@ describe("appendOrder", () => {
       timestamp: "2026-01-01",
     })
 
-    await runWithFs(appendOrder(walPath, order))
-
-    const raw = await readFile(walPath, "utf-8")
-    const log = JSON.parse(raw)
-    expect(log.orders).toHaveLength(1)
+    const exit = await Effect.runPromiseExit(
+      Effect.provide(appendOrder(walPath, order), NodeFileSystem.layer),
+    )
+    expect(exit._tag).toBe("Failure")
   })
 
   test("creates nested directories when needed", async () => {
@@ -268,7 +265,7 @@ describe("promote", () => {
     expect(targetLog.orders).toHaveLength(1)
   })
 
-  test("recovers from corrupt WAL JSON during promotion", async () => {
+  test("fails loudly on corrupt WAL JSON during promotion", async () => {
     const ordersDir = resolve(tempDir, ".orders")
     await mkdir(ordersDir, { recursive: true })
 
@@ -278,13 +275,14 @@ describe("promote", () => {
     // Write corrupt WAL
     await writeFile(walPath, "not json at all", "utf-8")
 
-    // Should treat corrupt WAL as empty — no-op
-    const result = await runWithFs(promote({ walPath, targetPath }))
-    expect(result.promoted).toBe(0)
-    expect(result.total).toBe(0)
+    // Corrupt WAL must fail — never silently drop history
+    const exit = await Effect.runPromiseExit(
+      Effect.provide(promote({ walPath, targetPath }), NodeFileSystem.layer),
+    )
+    expect(exit._tag).toBe("Failure")
   })
 
-  test("recovers from corrupt target JSON during promotion", async () => {
+  test("fails loudly on corrupt target JSON during promotion", async () => {
     const ordersDir = resolve(tempDir, ".orders")
     await mkdir(ordersDir, { recursive: true })
 
@@ -299,18 +297,14 @@ describe("promote", () => {
     })
     await writeFile(walPath, JSON.stringify(wal, null, 2), "utf-8")
 
-    // Write corrupt target — backup will have corrupt content
+    // Write corrupt target
     await writeFile(targetPath, "corrupt target", "utf-8")
 
-    // Promotion should still work — treats corrupt target as empty
-    const result = await runWithFs(promote({ walPath, targetPath }))
-    expect(result.promoted).toBe(1)
-    expect(result.total).toBe(1)
-
-    // Verify target is now valid
-    const targetRaw = await readFile(targetPath, "utf-8")
-    const targetLog = JSON.parse(targetRaw)
-    expect(targetLog.orders).toHaveLength(1)
+    // Corrupt target must fail — never silently drop history
+    const exit = await Effect.runPromiseExit(
+      Effect.provide(promote({ walPath, targetPath }), NodeFileSystem.layer),
+    )
+    expect(exit._tag).toBe("Failure")
   })
 
   test("handles missing WAL file during promotion", async () => {

@@ -494,7 +494,9 @@ const makeSazed = Effect.gen(function* () {
     // Write context to temp file, run analysis, clean up
     return Clock.currentTimeMillis.pipe(
       Effect.flatMap((now) => {
-        const contextPath = `/tmp/dalinar-prior-context-${opts.epicKey}-${now}.md`
+        // Use epicKey and timestamp + random suffix to prevent collisions
+        const suffix = Math.random().toString(36).slice(2, 8)
+        const contextPath = `/tmp/dalinar-prior-context-${opts.epicKey}-${now}-${suffix}.md`
         return Effect.scoped(
           Effect.acquireUseRelease(
             fs.writeFileString(contextPath, opts.context!).pipe(

@@ -17,8 +17,8 @@ export class OrderLog extends Schema.Class<OrderLog>("OrderLog")({
 export const OrderLogJson = Schema.parseJson(OrderLog)
 
 /**
- * Load an OrderLog from a file. Missing/corrupt files gracefully return empty.
- * Shared by promotion, append, and any future WAL readers.
+ * Load an OrderLog from a file. Missing files return empty.
+ * Corrupt files fail loudly — an audit log must never silently drop history.
  */
 export const loadOrderLog = (filePath: string) =>
   Effect.gen(function* () {
@@ -30,6 +30,5 @@ export const loadOrderLog = (filePath: string) =>
       Effect.flatMap((raw) =>
         raw ? Schema.decode(OrderLogJson)(raw) : Effect.succeed(new OrderLog({ orders: [] })),
       ),
-      Effect.catchAll(() => Effect.succeed(new OrderLog({ orders: [] }))),
     )
   })

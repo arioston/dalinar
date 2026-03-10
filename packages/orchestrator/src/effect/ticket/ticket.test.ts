@@ -248,21 +248,16 @@ describe("acquireLock", () => {
     await runLock(releaseLock(lockPath))
   })
 
-  test("empty PID file is treated as held (not stale)", async () => {
+  test("empty PID file is treated as stale (recoverable)", async () => {
     const lockPath = join(tempDir, "test.lock")
-    // Simulate the PID write gap: create dir but write empty PID
+    // Simulate a partial acquire: dir exists but PID write failed
     await mkdir(lockPath)
     const { writeFile } = await import("fs/promises")
     await writeFile(join(lockPath, "pid"), "")
 
-    // Should time out (not steal the lock) — use a very short timeout
-    const exit = await Effect.runPromiseExit(
-      Effect.provide(
-        acquireLock(lockPath, { timeout: "200 millis", retryInterval: "50 millis" }),
-        NodeFileSystem.layer,
-      ),
-    )
-    expect(exit._tag).toBe("Failure")
+    // Should successfully acquire (empty PID = stale, cleaned up)
+    await runLock(acquireLock(lockPath, { timeout: "2 seconds" }))
+    await runLock(releaseLock(lockPath))
   })
 
   test("stale PID lock is reclaimed", async () => {

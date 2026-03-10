@@ -23,8 +23,9 @@ export function resolveJasnahRoot(): string {
   // Monorepo submodule (primary)
   const submodule = resolve(resolveDalinarRoot(), "modules/jasnah")
   if (existsSync(resolve(submodule, "package.json"))) return submodule
-  // Fallback: external install location
-  return resolve(process.env.HOME ?? "~", ".local/share/jasnah")
+  // Fallback: honor XDG_DATA_HOME, then default location
+  const dataHome = process.env.XDG_DATA_HOME ?? resolve(process.env.HOME ?? "~", ".local/share")
+  return resolve(dataHome, "jasnah")
 }
 
 export function resolveJasnahScript(name: string): string {

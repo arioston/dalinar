@@ -310,15 +310,15 @@ export const cliApp = Command.run(dalinar, {
 
 export const runCliApp = (args: string[]) => {
   const program = Effect.gen(function* () {
-    // Preflight checks — in non-interactive (CI) mode, fail on errors
-    const isInteractive = process.stdout.isTTY ?? false
+    // Preflight checks — in CI mode, fail on errors instead of warning
+    const isCI = !!process.env.CI
     yield* preflight.pipe(
       Effect.provide(NodeFileSystem.layer),
       Effect.provide(SubprocessServiceLive),
       Effect.catchAll((e) =>
-        isInteractive
-          ? Effect.logWarning(`Preflight failed: ${e}`)
-          : Effect.fail(e),
+        isCI
+          ? Effect.fail(e)
+          : Effect.logWarning(`Preflight failed: ${e}`),
       ),
     )
 
@@ -326,9 +326,9 @@ export const runCliApp = (args: string[]) => {
       Effect.provide(NodeFileSystem.layer),
       Effect.provide(SubprocessServiceLive),
       Effect.catchAll((e) =>
-        isInteractive
-          ? Effect.logWarning(`Doctor check failed: ${String(e)}`)
-          : Effect.fail(e),
+        isCI
+          ? Effect.fail(e)
+          : Effect.logWarning(`Doctor check failed: ${String(e)}`),
       ),
     )
 

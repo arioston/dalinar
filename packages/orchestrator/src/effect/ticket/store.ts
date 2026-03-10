@@ -121,9 +121,7 @@ export const makeTicketStore = (root: string) =>
 
               const result = yield* transition(state, action)
 
-              yield* save(result)
-
-              // Best-effort audit trail — WAL append failure does not roll back the state transition
+              // WAL append first — if it fails, don't commit the state change
               const now = yield* Clock.currentTimeMillis
               const order = new Order({
                 id: `${ticketKey}-${action._tag}-${now}`,
@@ -131,11 +129,9 @@ export const makeTicketStore = (root: string) =>
                 action: action._tag,
                 timestamp: new Date(now).toISOString(),
               })
-              yield* wal.append(order).pipe(
-                Effect.catchAll((e) =>
-                  Effect.logWarning(`WAL append failed for ${ticketKey}: ${e}`),
-                ),
-              )
+              yield* wal.append(order)
+
+              yield* save(result)
 
               return result
             }),
