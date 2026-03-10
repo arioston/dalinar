@@ -28,16 +28,18 @@ const makeSnapshotService = Effect.gen(function* () {
   const lastHashRef = yield* Ref.make("")
   const cacheRef = yield* Ref.make<MiseSnapshot | null>(null)
 
-  const buildSnapshot = (input: SnapshotInput, timestamp: string): MiseSnapshot => {
-    const hash = contentHash({
+  const inputHash = (input: SnapshotInput): string =>
+    contentHash({
       backlog: input.backlog,
       capacity: input.capacity,
       recentHistory: input.recentHistory,
       metadata: input.metadata,
     })
+
+  const buildSnapshot = (input: SnapshotInput, timestamp: string): MiseSnapshot => {
     return new MiseSnapshotClass({
       timestamp,
-      contentHash: hash,
+      contentHash: inputHash(input),
       backlog: [...input.backlog],
       capacity: input.capacity,
       recentHistory: [...input.recentHistory],
@@ -47,10 +49,7 @@ const makeSnapshotService = Effect.gen(function* () {
 
   const current: SnapshotServiceShape["current"] = (input) =>
     Effect.gen(function* () {
-      const hash = contentHash({
-        backlog: input.backlog,
-        capacity: input.capacity,
-      })
+      const hash = inputHash(input)
 
       const lastHash = yield* Ref.get(lastHashRef)
       if (hash === lastHash) {
@@ -69,10 +68,7 @@ const makeSnapshotService = Effect.gen(function* () {
 
   const hasChanged: SnapshotServiceShape["hasChanged"] = (input) =>
     Effect.gen(function* () {
-      const hash = contentHash({
-        backlog: input.backlog,
-        capacity: input.capacity,
-      })
+      const hash = inputHash(input)
       const lastHash = yield* Ref.get(lastHashRef)
       return hash !== lastHash
     })

@@ -4,12 +4,16 @@ import { FileOperationError } from "../errors.js"
 
 function isStale(lockContent: string): boolean {
   try {
-    const pid = parseInt(lockContent.trim(), 10)
-    if (isNaN(pid)) return true
+    const trimmed = lockContent.trim()
+    // Empty or non-numeric PID means lock was just created and PID
+    // hasn't been written yet — treat as held (not stale)
+    if (!trimmed) return false
+    const pid = parseInt(trimmed, 10)
+    if (isNaN(pid)) return false
     process.kill(pid, 0)
-    return false
+    return false // process exists — lock is held
   } catch {
-    return true
+    return true // process.kill threw — PID doesn't exist, lock is stale
   }
 }
 
@@ -31,7 +35,26 @@ export const acquireLock = (
     // mkdir is atomic: if it succeeds, we exclusively own the lock
     const acquired = yield* fs.makeDirectory(lockPath).pipe(
       Effect.as(true),
-      Effect.catchAll(() => Effect.succeed(false)),
+      Effect.catchTag("SystemError", (e) =>
+        e.reason === "AlreadyExists"
+          ? Effect.succeed(false)
+          : Effect.fail(
+              new FileOperationError({
+                message: `Lock directory error: ${e.reason}`,
+                filePath: lockPath,
+                cause: e,
+              }),
+            ),
+      ),
+      Effect.catchTag("BadArgument", (e) =>
+        Effect.fail(
+          new FileOperationError({
+            message: `Lock path invalid: ${e.message}`,
+            filePath: lockPath,
+            cause: e,
+          }),
+        ),
+      ),
     )
 
     if (acquired) {

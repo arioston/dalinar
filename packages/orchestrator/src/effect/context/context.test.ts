@@ -171,4 +171,59 @@ describe("SnapshotService", () => {
     expect(unchanged).toBe(false)
     expect(changed).toBe(true)
   })
+
+  test("hasChanged detects recentHistory changes", async () => {
+    const changedInput: SnapshotInput = {
+      ...input,
+      recentHistory: [
+        new HistoryEntry({ timestamp: "2026-01-02", action: "sprint-end" }),
+      ],
+    }
+
+    const changed = await run(
+      Effect.gen(function* () {
+        const svc = yield* SnapshotService
+        yield* svc.current(input)
+        return yield* svc.hasChanged(changedInput)
+      }),
+    )
+
+    expect(changed).toBe(true)
+  })
+
+  test("hasChanged detects metadata changes", async () => {
+    const inputWithMeta: SnapshotInput = { ...input, metadata: { version: 1 } }
+    const changedMeta: SnapshotInput = { ...input, metadata: { version: 2 } }
+
+    const changed = await run(
+      Effect.gen(function* () {
+        const svc = yield* SnapshotService
+        yield* svc.current(inputWithMeta)
+        return yield* svc.hasChanged(changedMeta)
+      }),
+    )
+
+    expect(changed).toBe(true)
+  })
+
+  test("current returns new snapshot when only recentHistory changes", async () => {
+    const changedInput: SnapshotInput = {
+      ...input,
+      recentHistory: [
+        new HistoryEntry({ timestamp: "2026-01-02", action: "sprint-end" }),
+      ],
+    }
+
+    const [s1, s2] = await run(
+      Effect.gen(function* () {
+        const svc = yield* SnapshotService
+        const first = yield* svc.current(input)
+        const second = yield* svc.current(changedInput)
+        return [first, second] as const
+      }),
+    )
+
+    expect(s1.contentHash).not.toBe(s2.contentHash)
+    expect(s1).not.toBe(s2)
+  })
 })

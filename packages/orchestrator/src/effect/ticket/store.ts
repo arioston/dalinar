@@ -9,7 +9,7 @@ import { transition } from "./transitions.js"
 import type { TicketAction } from "./actions.js"
 import { acquireLock, releaseLock } from "./lock.js"
 import { Order } from "../wal/schema.js"
-import { appendOrder } from "../wal/append.js"
+import { WALService } from "../wal/service.js"
 
 export interface TicketStoreShape {
   readonly load: (
@@ -106,7 +106,7 @@ export const makeTicketStore = (root: string) =>
           ),
         )
 
-    const walPath = resolve(root, ".orders", "orders-next.json")
+    const wal = yield* WALService
 
     const apply: TicketStoreShape["apply"] = (ticketKey, action) => {
       const lockPath = resolve(ticketDir(root), `${ticketKey.toLowerCase()}.lock`)
@@ -123,7 +123,7 @@ export const makeTicketStore = (root: string) =>
 
               yield* save(result)
 
-              // Emit WAL record under the same lock for atomic audit trail
+              // Best-effort audit trail — WAL append failure does not roll back the state transition
               const now = yield* Clock.currentTimeMillis
               const order = new Order({
                 id: `${ticketKey}-${action._tag}-${now}`,
@@ -131,10 +131,9 @@ export const makeTicketStore = (root: string) =>
                 action: action._tag,
                 timestamp: new Date(now).toISOString(),
               })
-              yield* appendOrder(walPath, order).pipe(
-                Effect.provideService(FileSystem.FileSystem, fs),
+              yield* wal.append(order).pipe(
                 Effect.catchAll((e) =>
-                  Effect.logWarning(`WAL append failed for ${ticketKey}: ${e.message}`),
+                  Effect.logWarning(`WAL append failed for ${ticketKey}: ${e}`),
                 ),
               )
 

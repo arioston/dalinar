@@ -1,17 +1,28 @@
 import { describe, expect, test, beforeEach, afterEach } from "bun:test"
-import { Effect, Exit } from "effect"
-import { mkdtemp, rm, readFile } from "fs/promises"
+import { Effect, Exit, Layer } from "effect"
+import { mkdtemp, rm, readFile, mkdir } from "fs/promises"
 import { tmpdir } from "os"
-import { join } from "path"
+import { join, resolve } from "path"
 import { NodeFileSystem } from "@effect/platform-node"
 import { Unclaimed, Claimed, InProgress, Done, Blocked } from "./state.js"
 import { transition } from "./transitions.js"
 import { encodeTicketState, decodeTicketState } from "./persistence.js"
 import { TicketStateError } from "../errors.js"
 import { makeTicketStore } from "./store.js"
+import { acquireLock, releaseLock } from "./lock.js"
+import { WALService, type WALServiceShape } from "../wal/service.js"
+import { OrderLog } from "../wal/schema.js"
 
-const runWithFs = <A, E>(effect: Effect.Effect<A, E, import("@effect/platform").FileSystem.FileSystem>) =>
-  Effect.runPromise(Effect.provide(effect, NodeFileSystem.layer))
+/** No-op WAL service for ticket store tests — appends are best-effort anyway */
+const TestWALService = Layer.succeed(WALService, {
+  append: () => Effect.succeed(new OrderLog({ orders: [] })),
+  promote: () => Effect.succeed({ promoted: 0, total: 0 }),
+} satisfies WALServiceShape)
+
+const testLayer = Layer.merge(NodeFileSystem.layer, TestWALService)
+
+const runWithFs = <A, E>(effect: Effect.Effect<A, E, import("@effect/platform").FileSystem.FileSystem | WALService>) =>
+  Effect.runPromise(Effect.provide(effect, testLayer))
 
 // -- State transitions ──────────────────────────────────────────────
 
@@ -212,5 +223,57 @@ describe("TicketStore", () => {
     const store = await runWithFs(makeTicketStore(tempDir))
     const result = await Effect.runPromise(store.load("NONEXISTENT"))
     expect(result).toBeNull()
+  })
+})
+
+// -- Lock behavior ───────────────────────────────────────────────────
+
+describe("acquireLock", () => {
+  let tempDir: string
+
+  beforeEach(async () => {
+    tempDir = await mkdtemp(join(tmpdir(), "lock-test-"))
+  })
+
+  afterEach(async () => {
+    await rm(tempDir, { recursive: true, force: true })
+  })
+
+  const runLock = <A, E>(effect: Effect.Effect<A, E, import("@effect/platform").FileSystem.FileSystem>) =>
+    Effect.runPromise(Effect.provide(effect, NodeFileSystem.layer))
+
+  test("acquires and releases lock", async () => {
+    const lockPath = join(tempDir, "test.lock")
+    await runLock(acquireLock(lockPath))
+    await runLock(releaseLock(lockPath))
+  })
+
+  test("empty PID file is treated as held (not stale)", async () => {
+    const lockPath = join(tempDir, "test.lock")
+    // Simulate the PID write gap: create dir but write empty PID
+    await mkdir(lockPath)
+    const { writeFile } = await import("fs/promises")
+    await writeFile(join(lockPath, "pid"), "")
+
+    // Should time out (not steal the lock) — use a very short timeout
+    const exit = await Effect.runPromiseExit(
+      Effect.provide(
+        acquireLock(lockPath, { timeout: "200 millis", retryInterval: "50 millis" }),
+        NodeFileSystem.layer,
+      ),
+    )
+    expect(exit._tag).toBe("Failure")
+  })
+
+  test("stale PID lock is reclaimed", async () => {
+    const lockPath = join(tempDir, "test.lock")
+    // Write a PID that definitely doesn't exist (very high number)
+    await mkdir(lockPath)
+    const { writeFile } = await import("fs/promises")
+    await writeFile(join(lockPath, "pid"), "9999999")
+
+    // Should successfully acquire (stale lock cleaned up)
+    await runLock(acquireLock(lockPath, { timeout: "2 seconds" }))
+    await runLock(releaseLock(lockPath))
   })
 })

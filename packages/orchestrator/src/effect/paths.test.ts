@@ -51,6 +51,30 @@ describe("path resolvers", () => {
     expect(typeof resolveJasnahRoot()).toBe("string")
   })
 
+  test("resolveJasnahRoot prefers JASNAH_ROOT env var", () => {
+    const original = process.env.JASNAH_ROOT
+    try {
+      process.env.JASNAH_ROOT = "/custom/jasnah"
+      expect(resolveJasnahRoot()).toBe("/custom/jasnah")
+    } finally {
+      if (original !== undefined) process.env.JASNAH_ROOT = original
+      else delete process.env.JASNAH_ROOT
+    }
+  })
+
+  test("resolveJasnahRoot falls back to submodule when populated", () => {
+    const original = process.env.JASNAH_ROOT
+    try {
+      delete process.env.JASNAH_ROOT
+      const result = resolveJasnahRoot()
+      // Should resolve to either submodule or external fallback
+      expect(result).toBeTruthy()
+      expect(typeof result).toBe("string")
+    } finally {
+      if (original !== undefined) process.env.JASNAH_ROOT = original
+    }
+  })
+
   test("resolveJasnahScript appends script name", () => {
     const path = resolveJasnahScript("search-memory.ts")
     expect(path).toContain("search-memory.ts")

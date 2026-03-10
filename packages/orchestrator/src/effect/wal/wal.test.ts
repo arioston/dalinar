@@ -7,6 +7,7 @@ import { resolve, join } from "path"
 import { Order, OrderLog } from "./schema.js"
 import { appendOrder } from "./append.js"
 import { promote } from "./promotion.js"
+import { acquireLock, releaseLock } from "../ticket/lock.js"
 
 const runWithFs = <A, E>(effect: Effect.Effect<A, E, import("@effect/platform").FileSystem.FileSystem>) =>
   Effect.runPromise(Effect.provide(effect, NodeFileSystem.layer))
@@ -473,5 +474,103 @@ describe("promote", () => {
     // Second promotion should be a no-op since WAL was truncated
     expect(result2.promoted).toBe(0)
     expect(result2.total).toBe(0)
+  })
+})
+
+// ── WALService (locked append + promote) ──────────────────────────
+
+describe("WAL locking", () => {
+  test("concurrent locked appends do not lose data", async () => {
+    const ordersDir = resolve(tempDir, ".orders")
+    await mkdir(ordersDir, { recursive: true })
+
+    const walPath = resolve(ordersDir, "orders-next.json")
+    const walLockPath = resolve(ordersDir, "wal.lock")
+
+    const lockedAppend = (order: Order) =>
+      Effect.scoped(
+        Effect.acquireUseRelease(
+          acquireLock(walLockPath),
+          () => appendOrder(walPath, order),
+          () => releaseLock(walLockPath),
+        ),
+      )
+
+    // Fire 5 concurrent appends
+    const orders = Array.from({ length: 5 }, (_, i) =>
+      new Order({ id: `o${i}`, ticketKey: `T-${i}`, action: "claim", timestamp: `2026-01-0${i + 1}` }),
+    )
+
+    await Promise.all(
+      orders.map((order) =>
+        Effect.runPromise(Effect.provide(lockedAppend(order), NodeFileSystem.layer)),
+      ),
+    )
+
+    // All 5 should be present
+    const raw = await readFile(walPath, "utf-8")
+    const log = JSON.parse(raw)
+    expect(log.orders).toHaveLength(5)
+  })
+
+  test("append during promotion does not lose data", async () => {
+    const ordersDir = resolve(tempDir, ".orders")
+    await mkdir(ordersDir, { recursive: true })
+
+    const walPath = resolve(ordersDir, "orders-next.json")
+    const targetPath = resolve(ordersDir, "orders.json")
+    const walLockPath = resolve(ordersDir, "wal.lock")
+
+    // Seed WAL with 2 orders
+    const wal = new OrderLog({
+      orders: [
+        new Order({ id: "o1", ticketKey: "T-1", action: "claim", timestamp: "2026-01-01" }),
+        new Order({ id: "o2", ticketKey: "T-2", action: "claim", timestamp: "2026-01-02" }),
+      ],
+    })
+    await writeFile(walPath, JSON.stringify(wal, null, 2), "utf-8")
+
+    const lockedPromote = Effect.scoped(
+      Effect.acquireUseRelease(
+        acquireLock(walLockPath),
+        () => promote({ walPath, targetPath }),
+        () => releaseLock(walLockPath),
+      ),
+    )
+
+    const lockedAppend = (order: Order) =>
+      Effect.scoped(
+        Effect.acquireUseRelease(
+          acquireLock(walLockPath),
+          () => appendOrder(walPath, order),
+          () => releaseLock(walLockPath),
+        ),
+      )
+
+    // Race: promote + append a new order concurrently
+    const newOrder = new Order({ id: "o3", ticketKey: "T-3", action: "claim", timestamp: "2026-01-03" })
+
+    await Promise.all([
+      Effect.runPromise(Effect.provide(lockedPromote, NodeFileSystem.layer)),
+      Effect.runPromise(Effect.provide(lockedAppend(newOrder), NodeFileSystem.layer)),
+    ])
+
+    // Count all orders across both files — nothing should be lost
+    const targetRaw = await readFile(targetPath, "utf-8").catch(() => '{"orders":[]}')
+    const walRaw = await readFile(walPath, "utf-8").catch(() => '{"orders":[]}')
+    const targetOrders = JSON.parse(targetRaw).orders
+    const walOrders = JSON.parse(walRaw).orders
+
+    // Deduplicate by id
+    const allIds = new Set([
+      ...targetOrders.map((o: { id: string }) => o.id),
+      ...walOrders.map((o: { id: string }) => o.id),
+    ])
+
+    // All 3 orders should exist somewhere (promoted or still in WAL)
+    expect(allIds.size).toBe(3)
+    expect(allIds.has("o1")).toBe(true)
+    expect(allIds.has("o2")).toBe(true)
+    expect(allIds.has("o3")).toBe(true)
   })
 })

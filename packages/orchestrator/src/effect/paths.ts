@@ -1,5 +1,6 @@
 import { Effect } from "effect"
 import { FileSystem } from "@effect/platform"
+import { existsSync } from "fs"
 import { resolve } from "path"
 import { FileOperationError } from "./errors.js"
 
@@ -19,8 +20,11 @@ export function resolveDalinarRoot(): string {
 export function resolveJasnahRoot(): string {
   // Explicit override takes precedence
   if (process.env.JASNAH_ROOT) return process.env.JASNAH_ROOT
-  // Default: resolve from monorepo submodule (not external install)
-  return resolve(resolveDalinarRoot(), "modules/jasnah")
+  // Monorepo submodule (primary)
+  const submodule = resolve(resolveDalinarRoot(), "modules/jasnah")
+  if (existsSync(resolve(submodule, "package.json"))) return submodule
+  // Fallback: external install location
+  return resolve(process.env.HOME ?? "~", ".local/share/jasnah")
 }
 
 export function resolveJasnahScript(name: string): string {

@@ -539,8 +539,8 @@ const coreAnalysis = (opts: AnalyzeTaskOptions) =>
 
 /**
  * Post-processing: Jira enrichment → optional note extraction → comment appending.
- * Side effects are isolated here so callers can use coreAnalysis alone for
- * preview-only, parallel compare, or replay scenarios.
+ * Separated from coreAnalysis so that the opts.notes guard determines
+ * whether side effects (Jasnah extraction) occur.
  */
 const postProcessAnalysis = (
   core: CoreAnalysisResult,
@@ -616,8 +616,6 @@ const postProcessAnalysis = (
 
 /**
  * Composed analysis: coreAnalysis → postProcessAnalysis.
- * Backward-compatible entry point. For preview-only use cases,
- * call coreAnalysis directly.
  */
 export const analyzeTask = (opts: AnalyzeTaskOptions) =>
   coreAnalysis(opts).pipe(
