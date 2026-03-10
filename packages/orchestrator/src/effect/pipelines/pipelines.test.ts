@@ -5,7 +5,7 @@ import { JasnahService, SazedService, ProjectRoot, type JasnahServiceShape, type
 import { JiraService, JiraServiceLive, type JiraServiceShape } from "../services/jira.js"
 import { JiraComment, JiraTask } from "../jira-schemas.js"
 import { SubprocessService, type SubprocessServiceShape } from "../subprocess.js"
-import { SazedError } from "../errors.js"
+import { SazedError, JiraError } from "../errors.js"
 import { SazedAnalyzeOutput, SazedSyncOutput, SazedStatusOutput, SazedNotesListOutput } from "@dalinar/protocol"
 import { reflectPipeline, reflectionToMemories } from "./reflect.js"
 import { dialecticPipeline } from "./dialectic.js"
@@ -391,6 +391,227 @@ describe("analyzeWithContextPipeline", () => {
     expect(capturedContext).toContain("To Do")
     expect(capturedContext).toContain("1 completed, 2 pending")
     expect(capturedContext).toContain("Do NOT invent new tasks")
+  })
+
+  test("forces re-analysis when prior context is provided", async () => {
+    let capturedOpts: { force?: boolean; context?: string } | undefined
+    const SpySazed = Layer.succeed(SazedService, {
+      analyze: (opts) => {
+        capturedOpts = opts
+        return Effect.succeed(testAnalyzeOutput)
+      },
+      syncToJira: () => Effect.succeed(new SazedSyncOutput({ created: [], updated: [], skipped: [] })),
+      checkStatus: () => Effect.succeed(new SazedStatusOutput({ epicKey: "EPIC-1", basedOnCommit: "abc1234", tasks: [] })),
+      listNotes: () => Effect.succeed(new SazedNotesListOutput({ notes: [] })),
+      searchNotes: () => Effect.succeed(new SazedNotesListOutput({ notes: [] })),
+    } satisfies SazedServiceShape)
+
+    const JiraWithTasks = Layer.succeed(JiraService, {
+      resolveKey: () => Effect.succeed(null),
+      fetchTask: (key) => Effect.succeed(new JiraTask({ key, summary: "", status: "Unknown", issueType: "Unknown" })),
+      fetchTasksForEpic: () => Effect.succeed([
+        new JiraTask({ key: "T-1", summary: "Task 1", status: "To Do", issueType: "Task" }),
+      ]),
+    } satisfies JiraServiceShape)
+
+    const layer = Layer.mergeAll(TestJasnah, SpySazed, TestSubprocess, JiraWithTasks, NodeFileSystem.layer)
+
+    await Effect.runPromise(
+      analyzeWithContextPipeline({
+        epicKey: "EPIC-1",
+        root: `/tmp/test-force-${Date.now()}`,
+        stdout: true,
+      }).pipe(Effect.provide(layer)),
+    )
+
+    // When task hierarchy exists, context must be provided to Sazed
+    expect(capturedOpts?.context).toBeDefined()
+    expect(capturedOpts?.context).toContain("Current Epic State")
+  })
+
+  test("resolves task key to parent epic and includes both in context", async () => {
+    let capturedContext: string | undefined
+    const SpySazed = Layer.succeed(SazedService, {
+      analyze: (opts) => {
+        capturedContext = opts.context
+        return Effect.succeed(testAnalyzeOutput)
+      },
+      syncToJira: () => Effect.succeed(new SazedSyncOutput({ created: [], updated: [], skipped: [] })),
+      checkStatus: () => Effect.succeed(new SazedStatusOutput({ epicKey: "EPIC-1", basedOnCommit: "abc1234", tasks: [] })),
+      listNotes: () => Effect.succeed(new SazedNotesListOutput({ notes: [] })),
+      searchNotes: () => Effect.succeed(new SazedNotesListOutput({ notes: [] })),
+    } satisfies SazedServiceShape)
+
+    const JiraWithResolution = Layer.succeed(JiraService, {
+      resolveKey: (key) => {
+        if (key === "TRK-100") {
+          return Effect.succeed({ epicKey: "TRK-50", taskKey: "TRK-100", issueType: "Task", taskSummary: "My task" })
+        }
+        return Effect.succeed(null)
+      },
+      fetchTask: (key) => Effect.succeed(new JiraTask({ key, summary: "", status: "Unknown", issueType: "Unknown" })),
+      fetchTasksForEpic: (epicKey) => {
+        if (epicKey === "TRK-50") {
+          return Effect.succeed([
+            new JiraTask({ key: "TRK-100", summary: "My task", status: "In Progress", issueType: "Task" }),
+            new JiraTask({ key: "TRK-101", summary: "Done task", status: "Done", issueType: "Task" }),
+          ])
+        }
+        return Effect.succeed([])
+      },
+    } satisfies JiraServiceShape)
+
+    const layer = Layer.mergeAll(TestJasnah, SpySazed, TestSubprocess, JiraWithResolution, NodeFileSystem.layer)
+
+    await Effect.runPromise(
+      analyzeWithContextPipeline({
+        epicKey: "TRK-100",
+        root: `/tmp/test-resolve-${Date.now()}`,
+        stdout: true,
+      }).pipe(Effect.provide(layer)),
+    )
+
+    // Context should contain both the done and in-progress tasks
+    expect(capturedContext).toBeDefined()
+    expect(capturedContext).toContain("TRK-100")
+    expect(capturedContext).toContain("My task")
+    expect(capturedContext).toContain("TRK-101")
+    expect(capturedContext).toContain("Done task")
+    expect(capturedContext).toContain("1 completed, 1 pending")
+  })
+
+  test("skips task hierarchy when epic has no children", async () => {
+    let capturedContext: string | undefined
+    const SpySazed = Layer.succeed(SazedService, {
+      analyze: (opts) => {
+        capturedContext = opts.context
+        return Effect.succeed(testAnalyzeOutput)
+      },
+      syncToJira: () => Effect.succeed(new SazedSyncOutput({ created: [], updated: [], skipped: [] })),
+      checkStatus: () => Effect.succeed(new SazedStatusOutput({ epicKey: "EPIC-1", basedOnCommit: "abc1234", tasks: [] })),
+      listNotes: () => Effect.succeed(new SazedNotesListOutput({ notes: [] })),
+      searchNotes: () => Effect.succeed(new SazedNotesListOutput({ notes: [] })),
+    } satisfies SazedServiceShape)
+
+    const JiraEmpty = Layer.succeed(JiraService, {
+      resolveKey: () => Effect.succeed(null),
+      fetchTask: (key) => Effect.succeed(new JiraTask({ key, summary: "", status: "Unknown", issueType: "Unknown" })),
+      fetchTasksForEpic: () => Effect.succeed([]),
+    } satisfies JiraServiceShape)
+
+    const layer = Layer.mergeAll(TestJasnah, SpySazed, TestSubprocess, JiraEmpty, NodeFileSystem.layer)
+
+    await Effect.runPromise(
+      analyzeWithContextPipeline({
+        epicKey: "EPIC-1",
+        root: `/tmp/test-no-children-${Date.now()}`,
+        stdout: true,
+      }).pipe(Effect.provide(layer)),
+    )
+
+    // No task hierarchy → context should not contain epic state block
+    // (may still contain Jasnah memories, but not task hierarchy)
+    if (capturedContext) {
+      expect(capturedContext).not.toContain("Current Epic State")
+    }
+  })
+
+  test("gracefully handles fetchTasksForEpic failure", async () => {
+    let capturedContext: string | undefined
+    const SpySazed = Layer.succeed(SazedService, {
+      analyze: (opts) => {
+        capturedContext = opts.context
+        return Effect.succeed(testAnalyzeOutput)
+      },
+      syncToJira: () => Effect.succeed(new SazedSyncOutput({ created: [], updated: [], skipped: [] })),
+      checkStatus: () => Effect.succeed(new SazedStatusOutput({ epicKey: "EPIC-1", basedOnCommit: "abc1234", tasks: [] })),
+      listNotes: () => Effect.succeed(new SazedNotesListOutput({ notes: [] })),
+      searchNotes: () => Effect.succeed(new SazedNotesListOutput({ notes: [] })),
+    } satisfies SazedServiceShape)
+
+    const JiraFailing = Layer.succeed(JiraService, {
+      resolveKey: () => Effect.succeed(null),
+      fetchTask: (key) => Effect.succeed(new JiraTask({ key, summary: "", status: "Unknown", issueType: "Unknown" })),
+      fetchTasksForEpic: () => Effect.fail(new JiraError({
+        message: "Jira API unavailable",
+        operation: "fetchTasksForEpic",
+      })),
+    } satisfies JiraServiceShape)
+
+    const layer = Layer.mergeAll(TestJasnah, SpySazed, TestSubprocess, JiraFailing, NodeFileSystem.layer)
+
+    // Should succeed despite Jira failure (graceful degradation)
+    const result = await Effect.runPromise(
+      analyzeWithContextPipeline({
+        epicKey: "EPIC-1",
+        root: `/tmp/test-jira-fail-${Date.now()}`,
+        stdout: true,
+      }).pipe(Effect.provide(layer)),
+    )
+
+    expect(result.markdown).toContain("Test Analysis")
+    // No task hierarchy in context since Jira failed
+    if (capturedContext) {
+      expect(capturedContext).not.toContain("Current Epic State")
+    }
+  })
+
+  test("includes git evidence from completed tasks in context", async () => {
+    let capturedContext: string | undefined
+    const SpySazed = Layer.succeed(SazedService, {
+      analyze: (opts) => {
+        capturedContext = opts.context
+        return Effect.succeed(testAnalyzeOutput)
+      },
+      syncToJira: () => Effect.succeed(new SazedSyncOutput({ created: [], updated: [], skipped: [] })),
+      checkStatus: () => Effect.succeed(new SazedStatusOutput({ epicKey: "EPIC-1", basedOnCommit: "abc1234", tasks: [] })),
+      listNotes: () => Effect.succeed(new SazedNotesListOutput({ notes: [] })),
+      searchNotes: () => Effect.succeed(new SazedNotesListOutput({ notes: [] })),
+    } satisfies SazedServiceShape)
+
+    const completedTask = new JiraTask({ key: "TRK-200", summary: "Auth module", status: "Done", issueType: "Story" })
+    const pendingTask = new JiraTask({ key: "TRK-201", summary: "Dashboard", status: "To Do", issueType: "Task" })
+
+    // Subprocess mock returns git log output for completed task
+    const SubprocessWithGit = Layer.succeed(SubprocessService, {
+      run: (_cmd, opts) => {
+        const args = opts?.args ?? []
+        const argsStr = args.join(" ")
+        if (argsStr.includes("--grep=TRK-200")) {
+          return Effect.succeed({
+            stdout: "abc1234 feat(auth): implement auth module\ndef5678 fix(auth): handle token refresh",
+            stderr: "",
+            exitCode: 0,
+            timedOut: false,
+          })
+        }
+        return Effect.succeed({ stdout: "", stderr: "", exitCode: 0, timedOut: false })
+      },
+    })
+
+    const JiraWithCompleted = Layer.succeed(JiraService, {
+      resolveKey: () => Effect.succeed(null),
+      fetchTask: (key) => Effect.succeed(new JiraTask({ key, summary: "", status: "Unknown", issueType: "Unknown" })),
+      fetchTasksForEpic: () => Effect.succeed([completedTask, pendingTask]),
+    } satisfies JiraServiceShape)
+
+    const layer = Layer.mergeAll(TestJasnah, SpySazed, SubprocessWithGit, JiraWithCompleted, NodeFileSystem.layer)
+
+    await Effect.runPromise(
+      analyzeWithContextPipeline({
+        epicKey: "EPIC-1",
+        root: `/tmp/test-evidence-${Date.now()}`,
+        stdout: true,
+      }).pipe(Effect.provide(layer)),
+    )
+
+    expect(capturedContext).toBeDefined()
+    // Should contain completed task evidence
+    expect(capturedContext).toContain("TRK-200")
+    expect(capturedContext).toContain("Auth module")
+    expect(capturedContext).toContain("1 completed, 1 pending")
+    // Should contain git evidence section
+    expect(capturedContext).toContain("implement auth module")
   })
 
   test("failed analysis returns SazedError", async () => {
