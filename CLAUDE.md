@@ -36,7 +36,7 @@ bun run packages/orchestrator/src/analyze-with-context.ts EPIC-XXX
 ```
 
 - **analyze**: `dalinar analyze EPIC-XXX [--force] [--notes] [--forensics] [--stdout] [--datastore-introspect]`
-  Searches Jasnah → runs Sazed analysis → enriches forensics with Jira (cached, rate-limited) → extracts knowledge back (8 extraction rules) → vault sync
+  Searches Jasnah → fetches Jira task hierarchy → gathers git evidence from completed tasks → writes prior context to temp file → runs Sazed analysis with `--prior-context` → enriches forensics with Jira (cached, rate-limited) → extracts knowledge back (8 extraction rules) → vault sync
 
 - **deep-analyze**: `dalinar deep-analyze EPIC-XXX [--force] [--notes] [--task-only]`
   Per-task deep analysis with sequential reduce
@@ -111,3 +111,4 @@ Tests: `bun test packages/orchestrator/src/effect/`
 - `JIRA_RATE_LIMIT`: Max Jira API requests/sec during forensics enrichment (default: 5)
 - `SAZED_TIMEOUT`: Sazed subprocess timeout (default: 120s)
 - Jira ticket cache: `.cache/jira-tickets.json` — persistent, never expires. Clear manually or via future `dalinar cache clear --jira` command
+- Prior context transport: orchestrator writes task hierarchy + git evidence to `/tmp/dalinar-prior-context-*.md`, passes to Sazed via `--prior-context <file>` flag (not env vars)

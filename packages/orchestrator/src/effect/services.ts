@@ -482,8 +482,22 @@ const makeSazed = Effect.gen(function* () {
       if (opts.datastore.noCache) args.push("--no-datastore-cache")
     }
 
-    const env = opts.context ? { DALINAR_CONTEXT: opts.context } : undefined
-    return runAndDecode(args, SazedAnalyzeOutput, "Analysis", { epicKey: opts.epicKey, env })
+    // Write context to temp file and pass via --prior-context flag
+    let contextPath: string | undefined
+    if (opts.context) {
+      const { writeFileSync } = require("fs") as typeof import("fs")
+      contextPath = `/tmp/dalinar-prior-context-${opts.epicKey}-${Date.now()}.md`
+      writeFileSync(contextPath, opts.context)
+      args.push("--prior-context", contextPath)
+    }
+
+    return runAndDecode(args, SazedAnalyzeOutput, "Analysis", { epicKey: opts.epicKey }).pipe(
+      Effect.ensuring(
+        contextPath
+          ? Effect.sync(() => { try { require("fs").unlinkSync(contextPath) } catch {} })
+          : Effect.void,
+      ),
+    )
   }
 
   const syncToJira: SazedServiceShape["syncToJira"] = (opts) => {
