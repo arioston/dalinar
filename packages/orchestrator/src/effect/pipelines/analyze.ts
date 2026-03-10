@@ -6,8 +6,14 @@ import { FileOperationError } from "../errors.js"
 import { vaultSyncPipeline } from "./vault-sync.js"
 import { analyzeTask } from "./analyze-helper.js"
 import { JiraService } from "../services/jira.js"
+import {
+  getCompletedTaskEvidence,
+  formatEvidenceAsContext,
+} from "./retro.js"
 
 // ── Effect pipeline ────────────────────────────────────────────────
+
+const DONE_STATUSES = new Set(["done", "closed", "resolved"])
 
 export const analyzeWithContextPipeline = (
   opts: AnalyzeOptions & { root?: string },
@@ -26,16 +32,38 @@ export const analyzeWithContextPipeline = (
       epicKey = resolved.epicKey
       taskKey = resolved.taskKey
       if (taskKey) {
-        yield* Effect.log(`Resolved task ${taskKey} (${resolved.issueType}) → epic ${epicKey}`)
+        yield* Effect.log(`Resolved task ${taskKey} (${resolved.issueType}) -> epic ${epicKey}`)
       }
     }
 
     yield* Effect.logInfo("Starting analysis with context")
 
+    // Stage 0.5: If we have a task key, gather git evidence from completed siblings
+    let extraContext: string | undefined
+    if (taskKey) {
+      const siblingTasks = yield* jira.fetchTasksForEpic(epicKey).pipe(
+        Effect.catchAll(() => Effect.succeed([] as import("../jira-schemas.js").JiraTask[])),
+      )
+      const completed = siblingTasks.filter((t) =>
+        DONE_STATUSES.has(t.status.toLowerCase()) && t.key !== taskKey,
+      )
+      if (completed.length > 0) {
+        yield* Effect.logInfo(`Gathering git evidence from ${completed.length} completed siblings`)
+        const root = opts.root ?? process.cwd()
+        const evidence = yield* Effect.forEach(
+          completed,
+          (task) => getCompletedTaskEvidence(task, root),
+          { concurrency: "unbounded" },
+        )
+        extraContext = formatEvidenceAsContext(evidence) || undefined
+      }
+    }
+
     // Stages 1-3: Search context → Sazed analysis → Extract notes (via shared helper)
     const result = yield* analyzeTask({
       epicKey,
       taskKey,
+      extraContext,
       root: opts.root,
       force: opts.force,
       notes: opts.notes,

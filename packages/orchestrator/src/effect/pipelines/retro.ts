@@ -1,106 +1,95 @@
+import { Effect } from "effect"
+import { SubprocessService } from "../subprocess.js"
 import type { JiraTask } from "../jira-schemas.js"
-import type { Order } from "../wal/schema.js"
-import type { MemorySearchResult } from "../services.js"
 
-export interface TaskRetro {
+// ── Types ─────────────────────────────────────────────────────────
+
+export interface CompletedTaskEvidence {
   readonly taskKey: string
   readonly summary: string
-  readonly status: string
-  readonly learnings: readonly string[]
-  readonly deltas: readonly TaskDelta[]
-  readonly surprises: readonly string[]
-  readonly walEntryIds: readonly string[]
-  readonly jasnahMemoryIds: readonly string[]
+  readonly commitLog: string
 }
 
-export interface TaskDelta {
-  readonly field: string
-  readonly planned: string
-  readonly actual: string
-}
+// ── Git log extraction ────────────────────────────────────────────
 
-export function buildTaskRetro(
+/**
+ * Extract git commit evidence for a completed task.
+ * Looks for commits mentioning the task key in messages,
+ * or on branches named feat/{task-key}.
+ */
+export const getCompletedTaskEvidence = (
   task: JiraTask,
-  orders: readonly Order[],
-  memories: readonly MemorySearchResult[],
-): TaskRetro {
-  const taskKeyLower = task.key.toLowerCase()
+  root: string,
+): Effect.Effect<CompletedTaskEvidence, never, SubprocessService> =>
+  Effect.gen(function* () {
+    const subprocess = yield* SubprocessService
+    const keyLower = task.key.toLowerCase()
 
-  // 1. Filter orders by ticketKey (case-insensitive)
-  const matchingOrders = orders.filter(
-    (o) => o.ticketKey.toLowerCase() === taskKeyLower,
-  )
-
-  // 2. Extract learnings from lesson-learned memories
-  const learnings = memories
-    .filter((m) => m.type === "lesson-learned")
-    .map((m) => m.summary)
-
-  // 3. Build deltas by comparing WAL order payloads against task current state
-  const deltas: TaskDelta[] = []
-  for (const order of matchingOrders) {
-    const payload = order.payload
-    if (!payload) continue
-
-    const payloadAssignee = payload["assignee"] as string | undefined
-    if (payloadAssignee != null && String(payloadAssignee) !== String(task.assignee ?? "")) {
-      deltas.push({
-        field: "assignee",
-        planned: String(payloadAssignee),
-        actual: String(task.assignee ?? ""),
+    // Strategy 1: commits mentioning the task key in message (case-insensitive)
+    const grepResult = yield* subprocess
+      .run("git", {
+        args: ["log", "--all", "--oneline", `--grep=${task.key}`, "-i", "-20"],
+        cwd: root,
+        rawCommand: true,
+        nothrow: true,
+        timeout: "10 seconds",
       })
+      .pipe(Effect.catchAll(() => Effect.succeed({ stdout: "", stderr: "", exitCode: 1, timedOut: false })))
+
+    // Strategy 2: commits on feat/{task-key} branch (if it exists)
+    const branchResult = yield* subprocess
+      .run("git", {
+        args: ["log", `feat/${keyLower}`, "--oneline", "-20", "--not", "main"],
+        cwd: root,
+        rawCommand: true,
+        nothrow: true,
+        timeout: "10 seconds",
+      })
+      .pipe(Effect.catchAll(() => Effect.succeed({ stdout: "", stderr: "", exitCode: 1, timedOut: false })))
+
+    // Merge and deduplicate (by commit hash prefix)
+    const seen = new Set<string>()
+    const lines: string[] = []
+
+    for (const raw of [grepResult.stdout, branchResult.stdout]) {
+      if (!raw) continue
+      for (const line of raw.split("\n")) {
+        const trimmed = line.trim()
+        if (!trimmed) continue
+        const hash = trimmed.split(" ")[0]
+        if (hash && !seen.has(hash)) {
+          seen.add(hash)
+          lines.push(trimmed)
+        }
+      }
     }
 
-    const payloadStoryPoints = payload["storyPoints"] as number | undefined
-    if (payloadStoryPoints != null && String(payloadStoryPoints) !== String(task.storyPoints ?? "")) {
-      deltas.push({
-        field: "storyPoints",
-        planned: String(payloadStoryPoints),
-        actual: String(task.storyPoints ?? ""),
-      })
-    }
+    const commitLog = lines.length > 0
+      ? lines.join("\n")
+      : "(no commits found)"
 
-    const payloadStatus = payload["status"] as string | undefined
-    if (payloadStatus != null && String(payloadStatus) !== String(task.status)) {
-      deltas.push({
-        field: "status",
-        planned: String(payloadStatus),
-        actual: String(task.status),
-      })
-    }
+    return {
+      taskKey: task.key,
+      summary: task.summary,
+      commitLog,
+    } satisfies CompletedTaskEvidence
+  })
+
+// ── Formatting ────────────────────────────────────────────────────
+
+export function formatEvidenceAsContext(
+  evidence: readonly CompletedTaskEvidence[],
+): string {
+  const meaningful = evidence.filter((e) => e.commitLog !== "(no commits found)")
+  if (meaningful.length === 0) return ""
+
+  const lines = ["## Completed Task Evidence (from git history)", ""]
+  for (const e of meaningful) {
+    lines.push(`### ${e.taskKey}: ${e.summary}`)
+    lines.push("```")
+    lines.push(e.commitLog)
+    lines.push("```")
+    lines.push("")
   }
-
-  // 4. Detect surprises
-  const surprises: string[] = []
-
-  const blockActions = matchingOrders.filter(
-    (o) => o.action.includes("block") || o.action.includes("unblock"),
-  )
-  if (blockActions.length > 0) {
-    surprises.push("Task was blocked/unblocked")
-  }
-
-  const claimReleaseActions = matchingOrders.filter(
-    (o) => o.action.includes("claim") || o.action.includes("release"),
-  )
-  if (claimReleaseActions.length > 1) {
-    surprises.push(
-      `Task changed hands ${claimReleaseActions.length} times`,
-    )
-  }
-
-  // 5. Track provenance
-  const walEntryIds = matchingOrders.map((o) => o.id)
-  const jasnahMemoryIds = memories.map((m) => m.memory_id)
-
-  return {
-    taskKey: task.key,
-    summary: task.summary,
-    status: task.status,
-    learnings,
-    deltas,
-    surprises,
-    walEntryIds,
-    jasnahMemoryIds,
-  }
+  return lines.join("\n")
 }

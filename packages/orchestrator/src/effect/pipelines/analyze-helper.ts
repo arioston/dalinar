@@ -355,7 +355,11 @@ const enrichWithJira = (
 
     // Load persistent cache
     const cache = yield* loadJiraCache(root)
-    const uncachedKeys = [...allKeys].filter(k => !cache.has(k))
+    // Treat entries with no comments as stale (pre-comments-support cache entries)
+    const uncachedKeys = [...allKeys].filter(k => {
+      const entry = cache.get(k)
+      return !entry || entry.comments.length === 0
+    })
 
     yield* Effect.logInfo("Jira enrichment").pipe(
       Effect.annotateLogs({

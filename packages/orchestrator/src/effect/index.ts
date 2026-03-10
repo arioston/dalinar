@@ -107,7 +107,11 @@ export {
   type DeepAnalyzeResult,
   type TaskAnalysis,
 } from "./pipelines/deep-analyze.js"
-export { buildTaskRetro, type TaskRetro, type TaskDelta } from "./pipelines/retro.js"
+export {
+  getCompletedTaskEvidence,
+  formatEvidenceAsContext,
+  type CompletedTaskEvidence,
+} from "./pipelines/retro.js"
 
 export {
   type TicketState,

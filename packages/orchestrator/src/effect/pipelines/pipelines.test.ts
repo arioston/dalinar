@@ -1,17 +1,19 @@
 import { describe, expect, test } from "bun:test"
 import { Effect, Layer } from "effect"
 import { NodeFileSystem } from "@effect/platform-node"
-import { JasnahService, SazedService, type JasnahServiceShape, type SazedServiceShape } from "../services.js"
-import { JiraService, type JiraServiceShape } from "../services/jira.js"
-import { JiraTask } from "../jira-schemas.js"
-import { SubprocessService } from "../subprocess.js"
+import { JasnahService, SazedService, ProjectRoot, type JasnahServiceShape, type SazedServiceShape } from "../services.js"
+import { JiraService, JiraServiceLive, type JiraServiceShape } from "../services/jira.js"
+import { JiraComment, JiraTask } from "../jira-schemas.js"
+import { SubprocessService, type SubprocessServiceShape } from "../subprocess.js"
 import { SazedError } from "../errors.js"
 import { SazedAnalyzeOutput, SazedSyncOutput, SazedStatusOutput, SazedNotesListOutput } from "@dalinar/protocol"
 import { reflectPipeline, reflectionToMemories } from "./reflect.js"
 import { dialecticPipeline } from "./dialectic.js"
 import { analyzeWithContextPipeline } from "./analyze.js"
+import { deepAnalyzePipeline, type DeepAnalyzeResult } from "./deep-analyze.js"
 import { implementTicketPipeline } from "./implement.js"
 import { auditPipeline, formatReport, type AuditReport } from "./audit.js"
+import { getCompletedTaskEvidence, formatEvidenceAsContext } from "./retro.js"
 import type { SprintReflection } from "../types/reflect.js"
 
 // ── Test Layers ───────────────────────────────────────────────────
@@ -309,6 +311,40 @@ describe("analyzeWithContextPipeline", () => {
     expect(result.memoriesUsed).toBe(0)
   })
 
+  test("analysis includes Jira ticket comments in markdown", async () => {
+    const JiraWithComments = Layer.succeed(JiraService, {
+      resolveKey: () => Effect.succeed(null),
+      fetchTask: (key) => Effect.succeed(new JiraTask({
+        key,
+        summary: "Test ticket",
+        status: "Done",
+        issueType: "Story",
+        comments: [
+          new JiraComment({ id: "1", author: "Alice", body: "Acceptance criteria clarified: must support batch mode", created: "2026-01-15T10:00:00Z" }),
+          new JiraComment({ id: "2", author: "Bob", body: "Blocked on API v2 migration", created: "2026-01-16T10:00:00Z" }),
+        ],
+      })),
+      fetchTasksForEpic: () => Effect.succeed([]),
+    } satisfies JiraServiceShape)
+
+    const LayerWithComments = Layer.mergeAll(TestJasnah, TestSazed, TestSubprocess, JiraWithComments, NodeFileSystem.layer)
+
+    // Use isolated root to avoid stale cache from other tests
+    const isolatedRoot = `/tmp/test-comments-${Date.now()}`
+    const result = await Effect.runPromise(
+      analyzeWithContextPipeline({
+        epicKey: "EPIC-1",
+        root: isolatedRoot,
+        stdout: true,
+      }).pipe(Effect.provide(LayerWithComments)),
+    )
+
+    expect(result.markdown).toContain("Jira Ticket Comments")
+    expect(result.markdown).toContain("Acceptance criteria clarified")
+    expect(result.markdown).toContain("Blocked on API v2 migration")
+    expect(result.markdown).toContain("Alice")
+  })
+
   test("failed analysis returns SazedError", async () => {
     const result = await Effect.runPromiseExit(
       analyzeWithContextPipeline({
@@ -422,5 +458,350 @@ describe("formatReport (pure)", () => {
     expect(output).toContain("[!]")
     expect(output).toContain("Test finding")
     expect(output).toContain("lesson-learned")
+  })
+})
+
+// ── git evidence (retro.ts) ──────────────────────────────────────
+
+describe("getCompletedTaskEvidence", () => {
+  test("extracts git log for a task key", async () => {
+    const GitSubprocess = Layer.succeed(SubprocessService, {
+      run: (_cmd, opts) => {
+        const args = opts.args as string[]
+        // Simulate git log --grep finding commits
+        if (args.includes("--grep=PROJ-100")) {
+          return Effect.succeed({
+            stdout: "abc1234 feat(PROJ-100): add widget\ndef5678 fix(PROJ-100): handle edge case",
+            stderr: "",
+            exitCode: 0,
+            timedOut: false,
+          })
+        }
+        // Branch lookup fails (no such branch)
+        return Effect.succeed({ stdout: "", stderr: "", exitCode: 128, timedOut: false })
+      },
+    } satisfies SubprocessServiceShape)
+
+    const task = new JiraTask({ key: "PROJ-100", summary: "Add widget", status: "Done", issueType: "Story" })
+
+    const result = await Effect.runPromise(
+      getCompletedTaskEvidence(task, "/tmp/test").pipe(
+        Effect.provide(GitSubprocess),
+      ),
+    )
+
+    expect(result.taskKey).toBe("PROJ-100")
+    expect(result.commitLog).toContain("abc1234")
+    expect(result.commitLog).toContain("def5678")
+    expect(result.commitLog).toContain("add widget")
+  })
+
+  test("returns (no commits found) when git has no matching commits", async () => {
+    const EmptyGitSubprocess = Layer.succeed(SubprocessService, {
+      run: () => Effect.succeed({ stdout: "", stderr: "", exitCode: 0, timedOut: false }),
+    } satisfies SubprocessServiceShape)
+
+    const task = new JiraTask({ key: "PROJ-999", summary: "Nothing here", status: "Done", issueType: "Story" })
+
+    const result = await Effect.runPromise(
+      getCompletedTaskEvidence(task, "/tmp/test").pipe(
+        Effect.provide(EmptyGitSubprocess),
+      ),
+    )
+
+    expect(result.commitLog).toBe("(no commits found)")
+  })
+})
+
+describe("formatEvidenceAsContext (pure)", () => {
+  test("formats evidence with commits into markdown", () => {
+    const evidence = [
+      { taskKey: "PROJ-1", summary: "Auth module", commitLog: "abc1234 feat: add auth\ndef5678 fix: token refresh" },
+      { taskKey: "PROJ-2", summary: "No commits", commitLog: "(no commits found)" },
+    ]
+
+    const context = formatEvidenceAsContext(evidence)
+    expect(context).toContain("Completed Task Evidence")
+    expect(context).toContain("PROJ-1: Auth module")
+    expect(context).toContain("abc1234 feat: add auth")
+    // PROJ-2 should be excluded (no commits)
+    expect(context).not.toContain("PROJ-2")
+  })
+
+  test("returns empty string when no evidence has commits", () => {
+    const evidence = [
+      { taskKey: "PROJ-1", summary: "A", commitLog: "(no commits found)" },
+    ]
+    expect(formatEvidenceAsContext(evidence)).toBe("")
+  })
+})
+
+// ── deep-analyze ─────────────────────────────────────────────────
+
+describe("deepAnalyzePipeline", () => {
+  const TestProjectRoot = Layer.succeed(ProjectRoot, { root: "/tmp/test" })
+
+  test("plan mode: no tasks triggers full epic decomposition", async () => {
+    // fetchTasksForEpic returns empty → plan mode
+    const DeepLayer = Layer.mergeAll(TestJasnah, TestSazed, TestSubprocess, TestJira, TestProjectRoot, NodeFileSystem.layer)
+
+    const result = await Effect.runPromise(
+      deepAnalyzePipeline({ key: "EPIC-1" }).pipe(
+        Effect.provide(DeepLayer),
+      ),
+    ) as DeepAnalyzeResult
+
+    expect(result.mode).toBe("plan")
+    expect(result.evidence).toHaveLength(0)
+    expect(result.analyses).toHaveLength(1)
+    expect(result.analyses[0].taskKey).toBe("EPIC-1")
+    expect(result.analyses[0].markdown).toContain("Test Analysis")
+  })
+
+  test("analyze-pending mode: completed tasks provide git evidence to pending analysis", async () => {
+    const completedTask = new JiraTask({ key: "PROJ-1", summary: "Done task", status: "Done", issueType: "Story" })
+    const pendingTask = new JiraTask({ key: "PROJ-2", summary: "Pending task", status: "In Progress", issueType: "Story" })
+
+    const JiraWithTasks = Layer.succeed(JiraService, {
+      resolveKey: () => Effect.succeed(null),
+      fetchTask: (key) => Effect.succeed(new JiraTask({ key, summary: "", status: "Unknown", issueType: "Unknown" })),
+      fetchTasksForEpic: () => Effect.succeed([completedTask, pendingTask]),
+    } satisfies JiraServiceShape)
+
+    // Track what context is passed to Sazed
+    let capturedContext: string | undefined
+    const TrackingSazed = Layer.succeed(SazedService, {
+      analyze: (opts) => {
+        // The context env var will contain the git evidence
+        capturedContext = opts.context
+        return Effect.succeed(testAnalyzeOutput)
+      },
+      syncToJira: () => Effect.succeed(new SazedSyncOutput({ created: [], updated: [], skipped: [] })),
+      checkStatus: () => Effect.succeed(new SazedStatusOutput({ epicKey: "EPIC-1", basedOnCommit: "abc1234", tasks: [] })),
+      listNotes: () => Effect.succeed(new SazedNotesListOutput({ notes: [] })),
+      searchNotes: () => Effect.succeed(new SazedNotesListOutput({ notes: [] })),
+    } satisfies SazedServiceShape)
+
+    // Git subprocess returns commit evidence for PROJ-1
+    const GitSubprocess = Layer.succeed(SubprocessService, {
+      run: (_cmd, opts) => {
+        const args = opts.args as string[]
+        if (args.includes("--grep=PROJ-1")) {
+          return Effect.succeed({
+            stdout: "aaa1111 feat(PROJ-1): implement auth module",
+            stderr: "",
+            exitCode: 0,
+            timedOut: false,
+          })
+        }
+        return Effect.succeed({ stdout: "", stderr: "", exitCode: 0, timedOut: false })
+      },
+    } satisfies SubprocessServiceShape)
+
+    const DeepLayer = Layer.mergeAll(
+      TestJasnah, TrackingSazed, GitSubprocess, JiraWithTasks, TestProjectRoot, NodeFileSystem.layer,
+    )
+
+    const result = await Effect.runPromise(
+      deepAnalyzePipeline({ key: "EPIC-1" }).pipe(
+        Effect.provide(DeepLayer),
+      ),
+    ) as DeepAnalyzeResult
+
+    expect(result.mode).toBe("analyze-pending")
+    expect(result.evidence).toHaveLength(1)
+    expect(result.evidence[0].taskKey).toBe("PROJ-1")
+    expect(result.evidence[0].commitLog).toContain("implement auth module")
+    // Only the pending task should be analyzed
+    expect(result.analyses).toHaveLength(1)
+    expect(result.analyses[0].taskKey).toBe("PROJ-2")
+  })
+
+  test("targeted mode: analyzes only the specified task", async () => {
+    const pendingA = new JiraTask({ key: "PROJ-A", summary: "Task A", status: "To Do", issueType: "Story" })
+    const pendingB = new JiraTask({ key: "PROJ-B", summary: "Task B", status: "To Do", issueType: "Story" })
+
+    const JiraTargeted = Layer.succeed(JiraService, {
+      resolveKey: (key) => Effect.succeed(
+        key === "PROJ-A" ? { epicKey: "EPIC-1", taskKey: "PROJ-A", issueType: "Story" } : null,
+      ),
+      fetchTask: (key) => Effect.succeed(new JiraTask({ key, summary: "", status: "Unknown", issueType: "Unknown" })),
+      fetchTasksForEpic: () => Effect.succeed([pendingA, pendingB]),
+    } satisfies JiraServiceShape)
+
+    const DeepLayer = Layer.mergeAll(
+      TestJasnah, TestSazed, TestSubprocess, JiraTargeted, TestProjectRoot, NodeFileSystem.layer,
+    )
+
+    const result = await Effect.runPromise(
+      deepAnalyzePipeline({ key: "PROJ-A" }).pipe(
+        Effect.provide(DeepLayer),
+      ),
+    ) as DeepAnalyzeResult
+
+    expect(result.mode).toBe("analyze-pending")
+    // Only PROJ-A should be analyzed, not PROJ-B
+    expect(result.analyses).toHaveLength(1)
+    expect(result.analyses[0].taskKey).toBe("PROJ-A")
+  })
+})
+
+// ── Jira schema decode (real API payloads) ───────────────────
+
+describe("JiraServiceLive decode (real payloads)", () => {
+  // Real Jira API response for a Task with null customfields
+  const taskPayload = JSON.stringify({
+    fields: {
+      customfield_10016: null,
+      summary: "Scheduler Settings v2",
+      issuetype: { name: "Task", subtask: false },
+      parent: { id: "32526", key: "TRK-4475" },
+      comment: { comments: [], maxResults: 0, total: 0, startAt: 0 },
+      assignee: { displayName: "Arioston Jaerger" },
+      customfield_10014: "TRK-4475",
+      status: { name: "In Progress", id: "10008" },
+      labels: [],
+    },
+  })
+
+  // Real Jira API response for an Epic with null customfields
+  const epicPayload = JSON.stringify({
+    fields: {
+      customfield_10016: null,
+      summary: "Availability, Agent, Scheduler Settings",
+      issuetype: { name: "Epic", subtask: false },
+      comment: { comments: [], maxResults: 0, total: 0, startAt: 0 },
+      assignee: { displayName: "Arioston Jaerger" },
+      customfield_10014: null,
+      status: { name: "In Progress", id: "10008" },
+      labels: [],
+    },
+  })
+
+  // Payload with comments
+  const taskWithCommentsPayload = JSON.stringify({
+    fields: {
+      customfield_10016: 3,
+      summary: "Auth module",
+      issuetype: { name: "Story" },
+      parent: { key: "TRK-4475" },
+      comment: {
+        comments: [
+          { id: "100", author: { displayName: "Alice" }, body: "AC clarified: must support batch", created: "2026-01-15T10:00:00Z" },
+          { id: "101", body: "Deployed to staging", created: "2026-01-16T10:00:00Z" },
+        ],
+      },
+      assignee: null,
+      customfield_10014: null,
+      status: { name: "Done" },
+      labels: ["backend"],
+    },
+  })
+
+  const makeSubprocess = (response: string) =>
+    Layer.succeed(SubprocessService, {
+      run: () => Effect.succeed({ stdout: response, stderr: "", exitCode: 0, timedOut: false }),
+    } satisfies SubprocessServiceShape)
+
+  test("decodes task with null customfield_10016 and null-free customfield_10014", async () => {
+    const layer = JiraServiceLive.pipe(Layer.provide(makeSubprocess(taskPayload)))
+
+    const result = await Effect.runPromise(
+      Effect.gen(function* () {
+        const jira = yield* JiraService
+        return yield* jira.fetchTask("TRK-4478")
+      }).pipe(Effect.provide(layer)),
+    )
+
+    expect(result.key).toBe("TRK-4478")
+    expect(result.summary).toBe("Scheduler Settings v2")
+    expect(result.status).toBe("In Progress")
+    expect(result.issueType).toBe("Task")
+    expect(result.assignee).toBe("Arioston Jaerger")
+    expect(result.storyPoints).toBeUndefined()  // null → undefined
+    expect(result.parentKey).toBe("TRK-4475")
+    expect(result.labels).toEqual([])
+    expect(result.comments).toEqual([])
+  })
+
+  test("decodes epic with null customfield_10014 and null customfield_10016", async () => {
+    const layer = JiraServiceLive.pipe(Layer.provide(makeSubprocess(epicPayload)))
+
+    const result = await Effect.runPromise(
+      Effect.gen(function* () {
+        const jira = yield* JiraService
+        return yield* jira.fetchTask("TRK-4475")
+      }).pipe(Effect.provide(layer)),
+    )
+
+    expect(result.key).toBe("TRK-4475")
+    expect(result.summary).toBe("Availability, Agent, Scheduler Settings")
+    expect(result.issueType).toBe("Epic")
+    expect(result.storyPoints).toBeUndefined()  // null → undefined
+    expect(result.parentKey).toBeUndefined()     // null → undefined
+    expect(result.comments).toEqual([])
+  })
+
+  test("decodes task with comments and story points", async () => {
+    const layer = JiraServiceLive.pipe(Layer.provide(makeSubprocess(taskWithCommentsPayload)))
+
+    const result = await Effect.runPromise(
+      Effect.gen(function* () {
+        const jira = yield* JiraService
+        return yield* jira.fetchTask("TRK-5000")
+      }).pipe(Effect.provide(layer)),
+    )
+
+    expect(result.summary).toBe("Auth module")
+    expect(result.storyPoints).toBe(3)
+    expect(result.assignee).toBeUndefined()  // null → undefined
+    expect(result.parentKey).toBe("TRK-4475")
+    expect(result.labels).toEqual(["backend"])
+    expect(result.comments).toHaveLength(2)
+    expect(result.comments![0].author).toBe("Alice")
+    expect(result.comments![0].body).toBe("AC clarified: must support batch")
+    expect(result.comments![1].author).toBeUndefined()  // no author field
+  })
+
+  test("resolveKey handles epic with null fields", async () => {
+    const layer = JiraServiceLive.pipe(Layer.provide(makeSubprocess(epicPayload)))
+
+    const result = await Effect.runPromise(
+      Effect.gen(function* () {
+        const jira = yield* JiraService
+        return yield* jira.resolveKey("TRK-4475")
+      }).pipe(Effect.provide(layer)),
+    )
+
+    expect(result).not.toBeNull()
+    expect(result!.epicKey).toBe("TRK-4475")
+    expect(result!.taskKey).toBeUndefined()
+    expect(result!.issueType).toBe("Epic")
+  })
+
+  test("resolveKey handles task with null customfield_10014 but parent.key", async () => {
+    // Task where customfield_10014 is set but parent.key also exists
+    const payload = JSON.stringify({
+      fields: {
+        summary: "A task",
+        issuetype: { name: "Task" },
+        parent: { key: "TRK-4475" },
+        customfield_10014: null,
+        status: { name: "To Do" },
+      },
+    })
+    const layer = JiraServiceLive.pipe(Layer.provide(makeSubprocess(payload)))
+
+    const result = await Effect.runPromise(
+      Effect.gen(function* () {
+        const jira = yield* JiraService
+        return yield* jira.resolveKey("TRK-4478")
+      }).pipe(Effect.provide(layer)),
+    )
+
+    expect(result).not.toBeNull()
+    expect(result!.epicKey).toBe("TRK-4475")  // from parent.key
+    expect(result!.taskKey).toBe("TRK-4478")
+    expect(result!.issueType).toBe("Task")
   })
 })

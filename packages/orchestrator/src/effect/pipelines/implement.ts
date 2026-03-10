@@ -23,29 +23,61 @@ const createWorktree = (ticketKey: string, root: string) =>
     const branch = `feat/${ticketKey.toLowerCase()}`
     const worktreePath = `${root}/.worktrees/${ticketKey.toLowerCase()}`
 
-    const result = yield* subprocess.run("git", {
-      args: ["worktree", "add", "-b", branch, worktreePath],
-      rawCommand: true,
-      cwd: root,
-      nothrow: true,
-      timeout: "30 seconds",
-    })
+    const git = (args: string[]) =>
+      subprocess.run("git", { args, rawCommand: true, cwd: root, nothrow: true, timeout: "30 seconds" })
+
+    // Step 1: Fetch remote so we know about remote branches
+    yield* Effect.logInfo("Fetching remote...")
+    yield* git(["fetch", "origin", "--prune"]).pipe(
+      Effect.tapError((e) => Effect.logWarning(`git fetch failed: ${e.message}`)),
+      Effect.orElseSucceed(() => ({ stdout: "", stderr: "", exitCode: 1, timedOut: false })),
+    )
+
+    // Step 2: Check if branch exists remotely or locally
+    const remoteBranch = `origin/${branch}`
+    const remoteCheck = yield* git(["rev-parse", "--verify", remoteBranch])
+    const localCheck = yield* git(["rev-parse", "--verify", branch])
+    const hasRemote = remoteCheck.exitCode === 0
+    const hasLocal = localCheck.exitCode === 0
+
+    // Step 3: Create worktree with appropriate strategy
+    let result: { stdout: string; stderr: string; exitCode: number; timedOut: boolean }
+
+    if (hasLocal) {
+      // Branch exists locally — attach worktree to it
+      yield* Effect.logInfo(`Branch ${branch} exists locally, attaching worktree`)
+      result = yield* git(["worktree", "add", worktreePath, branch])
+    } else if (hasRemote) {
+      // Branch exists on remote — create local tracking branch
+      yield* Effect.logInfo(`Branch ${branch} exists on remote, creating tracking worktree`)
+      result = yield* git(["worktree", "add", "--track", "-b", branch, worktreePath, remoteBranch])
+    } else {
+      // New branch — create from HEAD
+      yield* Effect.logInfo(`Creating new branch ${branch}`)
+      result = yield* git(["worktree", "add", "-b", branch, worktreePath])
+    }
 
     if (result.exitCode !== 0) {
-      if (result.stderr.includes("already exists")) {
-        const retry = yield* subprocess.run("git", {
-          args: ["worktree", "add", worktreePath, branch],
-          rawCommand: true,
-          cwd: root,
-          nothrow: true,
-          timeout: "30 seconds",
-        })
-        if (retry.exitCode === 0) {
-          return { path: worktreePath, branch }
-        }
-      }
       yield* Effect.logWarning(`Failed to create worktree: ${result.stderr}`)
       return null
+    }
+
+    // Step 4: If local branch existed and remote is ahead, pull updates
+    if (hasLocal && hasRemote) {
+      yield* Effect.logInfo("Pulling latest from remote...")
+      yield* subprocess.run("git", {
+        args: ["pull", "--ff-only", "origin", branch],
+        rawCommand: true,
+        cwd: worktreePath,
+        nothrow: true,
+        timeout: "30 seconds",
+      }).pipe(
+        Effect.tap((r) =>
+          r.exitCode !== 0
+            ? Effect.logWarning(`git pull --ff-only failed: ${r.stderr}. Worktree may be behind remote.`)
+            : Effect.void,
+        ),
+      )
     }
 
     return { path: worktreePath, branch }

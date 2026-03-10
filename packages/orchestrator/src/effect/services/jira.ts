@@ -25,16 +25,16 @@ const JiraCommentItem = Schema.Struct({
 
 const JiraIssueFields = Schema.Struct({
   summary: Schema.optional(Schema.String),
-  status: Schema.optional(Schema.Struct({ name: Schema.String })),
-  issuetype: Schema.optional(Schema.Struct({ name: Schema.String })),
-  assignee: Schema.optional(Schema.Struct({ displayName: Schema.String })),
-  parent: Schema.optional(Schema.Struct({ key: Schema.String })),
-  customfield_10014: Schema.optional(Schema.String),  // Epic Link
-  customfield_10016: Schema.optional(Schema.Number),  // Story Points
-  labels: Schema.optional(Schema.Array(Schema.String)),
-  comment: Schema.optional(Schema.Struct({
+  status: Schema.optional(Schema.NullOr(Schema.Struct({ name: Schema.String }))),
+  issuetype: Schema.optional(Schema.NullOr(Schema.Struct({ name: Schema.String }))),
+  assignee: Schema.optional(Schema.NullOr(Schema.Struct({ displayName: Schema.String }))),
+  parent: Schema.optional(Schema.NullOr(Schema.Struct({ key: Schema.String }))),
+  customfield_10014: Schema.optional(Schema.NullOr(Schema.String)),  // Epic Link
+  customfield_10016: Schema.optional(Schema.NullOr(Schema.Number)),  // Story Points
+  labels: Schema.optional(Schema.NullOr(Schema.Array(Schema.String))),
+  comment: Schema.optional(Schema.NullOr(Schema.Struct({
     comments: Schema.Array(JiraCommentItem),
-  })),
+  }))),
 })
 
 const JiraIssueResponse = Schema.Struct({
@@ -94,10 +94,10 @@ const fieldsToJiraTask = (key: string, fields: JiraIssueFieldsType | undefined):
     summary: fields?.summary ?? "",
     status: fields?.status?.name ?? "Unknown",
     issueType: fields?.issuetype?.name ?? "Unknown",
-    assignee: fields?.assignee?.displayName,
-    storyPoints: fields?.customfield_10016,
-    labels: fields?.labels,
-    parentKey: fields?.parent?.key ?? fields?.customfield_10014,
+    assignee: fields?.assignee?.displayName ?? undefined,
+    storyPoints: fields?.customfield_10016 ?? undefined,
+    labels: fields?.labels ?? undefined,
+    parentKey: fields?.parent?.key ?? fields?.customfield_10014 ?? undefined,
     comments: fields?.comment?.comments.map(c => new JiraComment({
       id: c.id,
       author: c.author?.displayName,
